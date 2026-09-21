@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Pandanarang"
+    given-names: "Reihan"
+    orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: isi ORCID jika ada
+title: "NeuralAlpha: Two-Stage Portfolio Optimization with Self-Supervised MAE Pre-training and CNN-BiLSTM Preselection on LQ45"
+version: 0.1.0
+doi: ""  # TODO: isi DOI jika sudah ada (Zenodo/Figshare)
+date-released: 2026-09-20
+url: "https://github.com/raindragon14/CNN-BiLSTM-LQ45"
+license: "MIT"
+keywords:
+  - "neural-networks"
+  - "portfolio-optimization"
+  - "deep-learning"
+  - "masked-autoencoder"
+  - "cnn-bilstm"
+  - "mean-variance"
+  - "self-supervised-learning"
+  - "LQ45"
+  - "indonesia-stock-exchange"
+repository-code: "https://github.com/raindragon14/CNN-BiLSTM-LQ45"
+repository-artifact: "https://github.com/raindragon14/CNN-BiLSTM-LQ45"

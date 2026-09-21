@@ -1,0 +1,30 @@
+[project]
+name = "lq45"
+version = "0.1.0"
+description = "NeuralAlpha: Two-stage portfolio optimization with self-supervised MAE pre-training and CNN-BiLSTM preselection for LQ45 equities"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.14",
+    "scikit-learn>=1.9",
+    "pandas>=3.0",
+    "numpy>=2.5",
+    "scipy>=1.18",
+    "pyyaml>=6.0",
+    "matplotlib>=3.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "black>=24.0",
+    "mypy>=1.10",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

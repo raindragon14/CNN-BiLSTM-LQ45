@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (isi tidak dipublikasikan; hanya struktur & dokumentasi)
+data/raw/**
+data/interim/**
+data/processed/**
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# Output eksperimen (generated)
+experiments/
+output/
+logs/
+*.log
+
+# Environment & secrets
+.env
+.envrc
+.env.local
+secrets.json
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+coverage/
+htmlcov/
+.mypy_cache/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+notebooks/__marimo__/
+
+# Generated reports (reproduce via scripts)
+reports/*
+!reports/.gitkeep
+!reports/*.md
+
+# Model weights (jika ada)
+*.pth
+*.pt
+*.h5
+*.model
+weights/
+checkpoints/
+
+# Temporary
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Dokumen internal (tidak dipublikasikan)
+AGENTS.md
+internal/
+Literature/
+
+# Docker (dihapus dari tracking)
+.dockerignore
+Dockerfile
+configs/best_hyperparams.yaml

@@ -1,0 +1,62 @@
+# Pool kandidat LQ45 untuk penelitian.
+#
+# Sumber: IDX LQ45 Company Profiles, periode Agustus 2019 - Januari 2020
+# (45 konstituen resmi yang tercantum pada halaman "Contents").
+#   Dokumen asli : https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
+#   Arsip        : https://web.archive.org/web/20210614191119/https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
+#
+# Dasar pemilihan:
+# - Dipakai komposisi yang berlaku pada awal periode out-of-sample (Januari
+#   2020), bukan komposisi terkini, agar tidak memasukkan informasi masa depan
+#   dan tidak menimbulkan bias survivorship dari daftar akhir periode.
+# - Pool dibekukan (fixed) untuk seluruh periode penelitian; keterbatasan ini
+#   dicatat pada data/README.md.
+period: "2019-08/2020-01"
+source: "IDX LQ45 Company Profiles, Agustus 2019"
+index: LQ45
+tickers:
+  - ADRO.JK
+  - AKRA.JK
+  - ANTM.JK
+  - ASII.JK
+  - BBCA.JK
+  - BBNI.JK
+  - BBRI.JK
+  - BBTN.JK
+  - BMRI.JK
+  - BRPT.JK
+  - BSDE.JK
+  - BTPS.JK
+  - CPIN.JK
+  - CTRA.JK
+  - ERAA.JK
+  - EXCL.JK
+  - GGRM.JK
+  - HMSP.JK
+  - ICBP.JK
+  - INCO.JK
+  - INDF.JK
+  - INDY.JK
+  - INKP.JK
+  - INTP.JK
+  - ITMG.JK
+  - JPFA.JK
+  - JSMR.JK
+  - KLBF.JK
+  - LPPF.JK
+  - MEDC.JK
+  - MNCN.JK
+  - PGAS.JK
+  - PTBA.JK
+  - PTPP.JK
+  - PWON.JK
+  - SCMA.JK
+  - SMGR.JK
+  - SRIL.JK
+  - TKIM.JK
+  - TLKM.JK
+  - TPIA.JK
+  - UNTR.JK
+  - UNVR.JK
+  - WIKA.JK
+  - WSKT.JK

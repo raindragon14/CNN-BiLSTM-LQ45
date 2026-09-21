@@ -1,0 +1,26 @@
+universe:
+  index: LQ45
+  # Pool kandidat dibaca dari configs/universe.yaml: 45 konstituen resmi
+  # periode Agustus 2019 - Januari 2020 (komposisi pada awal OOS).
+  constituents: configs/universe.yaml
+
+period:
+  start: "2018-01-01"
+  end: "2025-12-31"
+
+sources:
+  price: yahoo_finance_jk          # .JK adjusted close (sekunder; divalidasi silang)
+  price_field: adjusted_close
+  fx: bi_jisdor                    # kurs referensi resmi Bank Indonesia
+  macro: [bi_7drrr, jisdor]
+  macro_lag: publication_date
+  benchmark: "^JKSE"                # IHSG untuk pembanding beli-dan-tahan
+
+cleaning:
+  forward_fill_max_days: 3
+  return_type: log
+
+costs:
+  buy_fee: 0.0019
+  sell_fee: 0.0029
+  lot_size: 100

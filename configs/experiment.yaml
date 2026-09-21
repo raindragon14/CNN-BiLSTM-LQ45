@@ -1,0 +1,72 @@
+# Jejak keputusan lengkap: docs/keputusan_desain.md
+#
+# Fitur akhir (Opsi 2), 8 buah. Sitasi tiap fitur:
+#   close, volume : Sebastian & Tantia (2024); Sen & Dutta (2021)      [B1, B2]
+#   rsi(14)       : Espiga-Fernandez et al. (2024) Lampiran B.3        [B3]
+#   cci(20)       : Espiga-Fernandez et al. (2024) Lampiran B.4        [B4]
+#   cmo(14)       : Espiga-Fernandez et al. (2024) Lampiran B.5        [B5]
+#   mfi(14)       : Espiga-Fernandez et al. (2024) Lampiran B.6        [B6]
+#   bi_7drrr      : ekstensi (celah Chaweewanchon & Chaysiri 2022)      [B8]
+#   jisdor        : ekstensi (idem)                                     [B9]
+# AROONOSC, Williams %R, STOCHF tidak diambil agar fitur tetap 8.        [B7]
+#
+# B9: jisdor log-return (level non-stasioner). C4: praproses di-fit hanya
+# pada data latih tiap jendela walk-forward.
+
+features:
+  base: [close, volume]
+  indicators:
+    rsi: 14
+    cci: 20
+    cmo: 14
+    mfi: 14
+  macro: [bi_7drrr, jisdor]
+  macro_transform:
+    bi_7drrr: level      # B8: hanya berubah bulanan, selisih hampir selalu nol
+    jisdor: log_return   # B9: level non-stasioner
+
+preprocessing:
+  # C1-C3: Sebastian & Tantia (2024) - outlier dicapit lalu diskalakan,
+  # diterapkan pada fitur dan target.
+  winsorize: {method: iqr, multiplier: 1.5}
+  scale: min_max
+  apply_to: [features, target]
+
+evaluation:
+  # E8: tingkat bebas risiko harian = BI-7DRRR tahunan dibagi 252 (resmi BI).
+  risk_free: {source: bi_7drrr, convention: annual_over_252}
+  # E9: konvensi 252 hari. IDX empiris ~242 hari/tahun; diuji pada sensitivitas.
+  annualization: 252
+
+ablation:
+  features:
+    - {name: price, add: []}
+    - {name: price_technical, add: [rsi, cci, cmo, mfi]}
+    - {name: price_technical_macro, add: [rsi, cci, cmo, mfi, bi_7drrr, jisdor]}
+  models: [mv_classic, ridge, random_forest, gradient_boosting, cnn_bilstm]
+  baselines: [equal_weight_1n, ihsg_buy_hold]
+
+metrics:
+  - sharpe
+  - sortino
+  - calmar
+  - max_drawdown
+  - cumulative_return
+  - annual_return
+  - turnover
+  - turnover_adjusted_sharpe
+  - deflated_sharpe
+  - pbo_cscv
+
+# OOS mulai 2020 (train awal 2 tahun)
+regimes:
+  design_calm:        {start: "2018-01-01", end: "2019-12-31", oos: false}
+  covid:              {start: "2020-01-01", end: "2020-12-31", oos: true}
+  recovery_rate_hike: {start: "2021-01-01", end: "2025-12-31", oos: true}
+
+significance:
+  # E15: Jobson & Korkie (1981) dikokohkan oleh Ledoit & Wolf (2008) dengan HAC.
+  # Uji asli Jobson-Korkie tidak andal pada distribusi non-normal dan deret waktu.
+  sharpe_test: ledoit_wolf_hac
+  # E16: Romano & Wolf (2005); kontrol backtest overfitting Bailey et al. (2016).
+  multiple_testing: romano_wolf
