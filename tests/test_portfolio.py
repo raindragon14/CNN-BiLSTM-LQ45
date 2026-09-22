@@ -1,6 +1,6 @@
-"""Uji modul portofolio; jalankan langsung: python3 tests/test_portfolio.py.
+"""Portfolio module tests; run directly: python3 tests/test_portfolio.py.
 
-Data di sini sintetis dan hanya untuk memvalidasi pipa, bukan hasil.
+The data here is synthetic and only validates the pipeline, not results.
 """
 
 import sys
@@ -13,16 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from lq45.portfolio.backtest import (
-    jalankan_backtest,
-    tanggal_rebalancing,
+    rebalance_dates,
+    run_backtest,
 )
-from lq45.portfolio.costs import nilai_transaksi, target_lembar
-from lq45.portfolio.covariance import taksir_kovarians
-from lq45.portfolio.optimize import bobot_varians_minimum
-from lq45.portfolio.ranking import ensemble_prediksi, peringkat_topk
+from lq45.portfolio.costs import target_shares, transaction_value
+from lq45.portfolio.covariance import estimate_covariance
+from lq45.portfolio.optimize import (
+    mean_variance_target_return_weights,
+    minimum_variance_weights,
+)
+from lq45.portfolio.ranking import ensemble_predictions, top_k
 
 
-def uji_ensemble_dan_topk() -> None:
+def test_ensemble_and_topk() -> None:
     frame = pd.DataFrame(
         {
             "date": ["2020-01-01"] * 6,
@@ -30,77 +33,95 @@ def uji_ensemble_dan_topk() -> None:
             "pred_raw": [0.1, 0.3, 0.2, 0.3, 0.1, 0.2],
         }
     )
-    ens = ensemble_prediksi(frame)
-    assert len(ens) == 3
-    assert peringkat_topk(ens, "2020-01-01", 2) == ["A", "B"]
-    assert peringkat_topk(ens, "2020-02-01", 2) == []
+    ensemble = ensemble_predictions(frame)
+    assert len(ensemble) == 3
+    assert top_k(ensemble, "2020-01-01", 2) == ["A", "B"]
+    assert top_k(ensemble, "2020-02-01", 2) == []
 
 
-def uji_kovarians_dan_bobot() -> None:
+def test_covariance_and_weights() -> None:
     rng = np.random.default_rng(1)
-    imbal = pd.DataFrame(rng.normal(size=(150, 4)), columns=list("ABCD"))
-    for metode in ("sample", "ridge_epsilon", "ledoit_wolf", "gmv"):
-        kov = taksir_kovarians(imbal, metode)
-        assert kov.shape == (4, 4)
-        bobot = bobot_varians_minimum(kov, 0.35)
-        assert abs(bobot.sum() - 1.0) < 1e-6
-        assert (bobot >= -1e-9).all() and (bobot <= 0.35 + 1e-6).all()
-    satu = taksir_kovarians(imbal[["A"]], "sample")
-    assert abs(bobot_varians_minimum(satu).iloc[0] - 1.0) < 1e-9
+    returns = pd.DataFrame(rng.normal(size=(150, 4)), columns=list("ABCD"))
+    for method in ("sample", "ridge_epsilon", "ledoit_wolf", "gmv"):
+        cov = estimate_covariance(returns, method)
+        assert cov.shape == (4, 4)
+        weights = minimum_variance_weights(cov, 0.35)
+        assert abs(weights.sum() - 1.0) < 1e-6
+        assert (weights >= -1e-9).all() and (weights <= 0.35 + 1e-6).all()
+    single = estimate_covariance(returns[["A"]], "sample")
+    assert abs(minimum_variance_weights(single).iloc[0] - 1.0) < 1e-9
 
 
-def uji_lot_dan_fee() -> None:
-    bobot = pd.Series({"A": 0.5, "B": 0.5})
-    harga = pd.Series({"A": 1000.0, "B": 500.0})
-    lembar = target_lembar(bobot, harga, 1_000_000.0, lot=100)
-    assert (lembar % 100 == 0).all()
-    arus, fee = nilai_transaksi(
+def test_lots_and_fees() -> None:
+    weights = pd.Series({"A": 0.5, "B": 0.5})
+    prices = pd.Series({"A": 1000.0, "B": 500.0})
+    shares = target_shares(weights, prices, 1_000_000.0, lot=100)
+    assert (shares % 100 == 0).all()
+    cash_flow, fee = transaction_value(
         pd.Series({"A": 0.0, "B": 0.0}),
-        lembar,
-        harga,
-        fee_beli=0.0019,
-        fee_jual=0.0029,
+        shares,
+        prices,
+        buy_fee=0.0019,
+        sell_fee=0.0029,
     )
-    assert arus < 0 and fee > 0
+    assert cash_flow < 0 and fee > 0
 
 
-def uji_backtest_kecil() -> None:
-    tanggal = pd.date_range("2020-01-01", periods=170, freq="B")
-    str_tanggal = [d.strftime("%Y-%m-%d") for d in tanggal]
+def test_small_backtest() -> None:
+    dates = pd.date_range("2020-01-01", periods=170, freq="B")
+    str_dates = [d.strftime("%Y-%m-%d") for d in dates]
     rng = np.random.default_rng(2)
     tickers = ["A.JK", "B.JK", "C.JK", "D.JK", "E.JK", "F.JK"]
-    harga = pd.DataFrame(
+    prices = pd.DataFrame(
         100 * np.exp(rng.normal(scale=0.01, size=(170, 6)).cumsum(axis=0)),
-        index=tanggal,
+        index=dates,
         columns=tickers,
     )
-    baris = [
+    rows = [
         {"date": t, "ticker": c, "pred_ens": float(rng.normal())}
-        for t in str_tanggal
+        for t in str_dates
         for c in tickers
     ]
-    prediksi = pd.DataFrame(baris)
-    bobot, nilai = jalankan_backtest(
-        prediksi,
-        harga,
+    predictions = pd.DataFrame(rows)
+    weights, values = run_backtest(
+        predictions,
+        prices,
         k=3,
         estimator="ridge_epsilon",
-        lihat_balik=60,
-        bobot_maks=0.5,
-        modal=10_000_000.0,
+        lookback=60,
+        max_weight=0.5,
+        capital=10_000_000.0,
     )
-    assert len(bobot) > 0 and len(nilai) > 0
-    assert abs(bobot.groupby("date")["weight"].sum().sub(1.0).abs().max()) < 1e-6
-    assert (nilai["equity"] > 0).all()
-    assert tanggal_rebalancing(str_tanggal[:42]) == str_tanggal[:42][::21]
+    assert len(weights) > 0 and len(values) > 0
+    assert abs(weights.groupby("date")["weight"].sum().sub(1.0).abs().max()) < 1e-6
+    assert (values["equity"] > 0).all()
+    assert rebalance_dates(str_dates[:42]) == str_dates[:42][::21]
+
+
+def test_optimizer_determinism() -> None:
+    rng = np.random.default_rng(7)
+    tickers = list("ABCDE")
+    returns = pd.DataFrame(rng.normal(size=(150, 5)), columns=tickers)
+    cov = estimate_covariance(returns, "ledoit_wolf")
+    mu = pd.Series(rng.normal(0.001, 0.002, size=5), index=tickers)
+    target = float(mu.mean())
+    a = mean_variance_target_return_weights(cov, mu, target, 0.35)
+    b = mean_variance_target_return_weights(cov, mu, target, 0.35)
+    assert np.allclose(a.to_numpy(), b.to_numpy())
+    assert abs(a.sum() - 1.0) < 1e-6
+    # Target outside the feasible range -> GMV fallback.
+    far = mean_variance_target_return_weights(cov, mu, 10.0, 0.35)
+    gmv = minimum_variance_weights(cov, 0.35)
+    assert np.allclose(far.to_numpy(), gmv.to_numpy())
 
 
 def main() -> int:
-    uji_ensemble_dan_topk()
-    uji_kovarians_dan_bobot()
-    uji_lot_dan_fee()
-    uji_backtest_kecil()
-    print("test_portfolio.py: 4 uji lolos")
+    test_ensemble_and_topk()
+    test_covariance_and_weights()
+    test_lots_and_fees()
+    test_small_backtest()
+    test_optimizer_determinism()
+    print("test_portfolio.py: 5 tests passed")
     return 0
 
 

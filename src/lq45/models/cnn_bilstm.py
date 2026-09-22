@@ -1,23 +1,23 @@
-"""Arsitektur CNN-BiLSTM untuk prediksi imbal hasil.
+"""CNN-BiLSTM architecture for return prediction.
 
-Sumber pilihan arsitektur (rincian: docs/keputusan_desain.md):
-- CNN dua lapis 32 -> 64: Espiga-Fernandez et al. (2024) Tabel 3.
-- Kernel 3: Chaweewanchon & Chaysiri (2022) memakai konvolusi 3x3.
-- BiLSTM dua lapis: Graves, Mohamed & Hinton (2013) memperkenalkan
-  RNN berlapis; Chaweewanchon & Chaysiri (2022) dan Sebastian & Tantia
-  (2024) memakai dua lapis LSTM.
-- BatchNorm: Chaweewanchon & Chaysiri (2022) memasang BatchNorm pada
-  arsitekturnya.
-- Dropout 0,2: Sebastian & Tantia (2024) memakai nilai 0,2.
-- ReLU: Espiga-Fernandez et al. (2024) Tabel 3 (aktivasi lapis konvolusi
-  dan lapis Linear).
+Architecture choices (details: docs/keputusan_desain.md):
+- Two-layer CNN 32 -> 64: Espiga-Fernandez et al. (2024) Table 3.
+- Kernel 3: Chaweewanchon & Chaysiri (2022) use 3x3 convolutions.
+- Two-layer BiLSTM: Graves, Mohamed & Hinton (2013) introduce stacked
+  RNNs; Chaweewanchon & Chaysiri (2022) and Sebastian & Tantia (2024)
+  use two LSTM layers.
+- BatchNorm: Chaweewanchon & Chaysiri (2022) place BatchNorm in their
+  architecture.
+- Dropout 0.2: Sebastian & Tantia (2024) use 0.2.
+- ReLU: Espiga-Fernandez et al. (2024) Table 3 (activation of the
+  convolution and Linear layers).
 
-Pilihan implementasi yang tidak ditetapkan artikel dan dicatat di
-docs/keputusan_desain.md: padding `same` pada konvolusi, urutan
-Conv -> BatchNorm -> ReLU, dan inisialisasi bawaan PyTorch.
+Implementation choices not specified by the papers and recorded in
+docs/keputusan_desain.md: `same` padding for the convolutions, the
+Conv -> BatchNorm -> ReLU order, and the default PyTorch initialization.
 
-Versi 2: Encoder dipisah ke `encoder.py` untuk pre-training.
-`CNNBiLSTM` sekarang wrapper tipis: `CNNBiLSTMEncoder` + `Linear(1)`.
+Version 2: the encoder was split out into `encoder.py` for pre-training.
+`CNNBiLSTM` is now a thin wrapper: `CNNBiLSTMEncoder` + `Linear(1)`.
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ from lq45.models.encoder import CNNBiLSTMEncoder
 
 
 class CNNBiLSTM(nn.Module):
-    """CNN-BiLSTM lengkap dengan projection head untuk prediksi supervised.
+    """Full CNN-BiLSTM with a projection head for supervised prediction.
 
     Wrapper: `CNNBiLSTMEncoder` + `Linear(1)`.
-    API identik dengan versi sebelumnya untuk backward compatibility.
+    API identical to the previous version for backward compatibility.
     """
 
     def __init__(
@@ -67,26 +67,26 @@ class CNNBiLSTM(nn.Module):
             activation=activation,
         )
         self.dropout_dense = nn.Dropout(dropout_dense)
-        arah = 2 if bidirectional else 1
-        self.dense = nn.Linear(units * arah, 1)
+        directions = 2 if bidirectional else 1
+        self.dense = nn.Linear(units * directions, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Terapkan encoder lalu projection head."""
+        """Apply the encoder, then the projection head."""
         z = self.encoder(x, return_sequence=False)  # (B, H)
         z = self.dropout_dense(z)
         return self.dense(z).squeeze(-1)
 
     def load_pretrained_encoder(self, state_dict: dict[str, torch.Tensor]) -> None:
-        """Load bobot pre-trained encoder."""
+        """Load the pre-trained encoder weights."""
         self.encoder.load_state_dict(state_dict)
 
     def freeze_encoder(self) -> None:
-        """Bekukan parameter encoder untuk fine-tuning head saja."""
+        """Freeze the encoder parameters to fine-tune only the head."""
         for p in self.encoder.parameters():
             p.requires_grad = False
 
     def unfreeze_encoder(self) -> None:
-        """Unfreeze encoder untuk full fine-tuning."""
+        """Unfreeze the encoder for full fine-tuning."""
         for p in self.encoder.parameters():
             p.requires_grad = True
 

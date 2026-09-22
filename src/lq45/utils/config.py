@@ -1,4 +1,4 @@
-"""Pemuatan konfigurasi dan lokasi berkas proyek."""
+"""Configuration loading and project file locations."""
 
 from __future__ import annotations
 
@@ -19,15 +19,15 @@ PROCESSED_DIR = DATA_DIR / "processed"
 
 
 def load_config(name: str) -> dict[str, Any]:
-    """Muat satu berkas YAML dari ``configs/`` berdasarkan nama tanpa ekstensi."""
+    """Load a single YAML file from ``configs/`` by name, without extension."""
     path = CONFIG_DIR / f"{name}.yaml"
     if not path.exists():
-        raise FileNotFoundError(f"konfigurasi tidak ditemukan: {path}")
+        raise FileNotFoundError(f"configuration not found: {path}")
     with path.open(encoding="utf-8") as handle:
         return yaml.safe_load(handle)
 
 
 def ensure_dirs(*paths: Path) -> None:
-    """Buat direktori keluaran bila belum ada."""
+    """Create output directories if they do not already exist."""
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)

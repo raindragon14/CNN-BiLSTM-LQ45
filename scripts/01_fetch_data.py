@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tahap 1: unduh data mentah ke ``data/raw/``.
+"""Stage 1: download the raw data into ``data/raw/``.
 
-Menghasilkan:
-- ``data/raw/prices/<TICKER>.csv``  : OHLCV harian (kolom ``Adj Close``)
-- ``data/raw/macro/jisdor.csv``     : kurs referensi resmi USD/IDR (BI)
-- ``data/raw/macro/bi_7drrr.csv``   : riwayat keputusan BI-7DRRR
-- ``data/raw/benchmark_ihsg.csv``   : IHSG untuk pembanding beli-dan-tahan
-- ``data/raw/metadata.json``        : ringkasan unduhan (waktu, jumlah baris)
+Outputs:
+- ``data/raw/prices/<TICKER>.csv``  : daily OHLCV (``Adj Close`` column)
+- ``data/raw/macro/jisdor.csv``     : official USD/IDR reference rate (BI)
+- ``data/raw/macro/bi_7drrr.csv``   : history of the BI-7DRRR decisions
+- ``data/raw/benchmark_ihsg.csv``   : IHSG for the buy-and-hold benchmark
+- ``data/raw/metadata.json``        : download summary (time, row counts)
 """
 
 from __future__ import annotations
@@ -27,22 +27,20 @@ from lq45.utils.config import RAW_DIR, ensure_dirs, load_config
 
 
 def parse_args() -> argparse.Namespace:
-    """Baca argumen baris perintah."""
-    parser = argparse.ArgumentParser(description="Unduh data mentah LQ45 dan makro.")
-    parser.add_argument("--start", default=None, help="tanggal awal (YYYY-MM-DD)")
-    parser.add_argument(
-        "--end", default=None, help="tanggal akhir inklusif (YYYY-MM-DD)"
-    )
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Download raw LQ45 and macro data.")
+    parser.add_argument("--start", default=None, help="start date (YYYY-MM-DD)")
+    parser.add_argument("--end", default=None, help="inclusive end date (YYYY-MM-DD)")
     parser.add_argument(
         "--tickers",
         default=None,
-        help="daftar ticker dipisah koma; default dari configs/universe.yaml",
+        help="comma-separated ticker list; defaults to configs/universe.yaml",
     )
     return parser.parse_args()
 
 
 def main() -> int:
-    """Unduh harga, kurs, suku bunga acuan, dan tolok ukur ke ``data/raw/``."""
+    """Download prices, exchange rates, policy rate, and benchmark to ``data/raw/``."""
     args = parse_args()
     data_cfg = load_config("data")
 
@@ -54,59 +52,59 @@ def main() -> int:
         else list(load_config("universe")["tickers"])
     )
 
-    # Yahoo memakai batas akhir eksklusif.
+    # Yahoo uses an exclusive end bound.
     end_exclusive = (pd.Timestamp(end) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     prices_dir = RAW_DIR / "prices"
     macro_dir = RAW_DIR / "macro"
     ensure_dirs(prices_dir, macro_dir)
 
-    print(f"Periode   : {start} s.d. {end}")
-    print(f"Ticker    : {len(tickers)} saham")
+    print(f"Period    : {start} to {end}")
+    print(f"Tickers   : {len(tickers)} stocks")
 
     frames = fetch_equities(tickers, start, end_exclusive)
-    tersimpan, kosong = [], []
+    saved, missing = [], []
     for ticker, frame in frames.items():
         if frame is None or frame.empty:
-            kosong.append(ticker)
+            missing.append(ticker)
             continue
-        nama = ticker.replace(".JK", "")
-        frame.to_csv(prices_dir / f"{nama}.csv")
-        tersimpan.append((nama, len(frame)))
+        name = ticker.replace(".JK", "")
+        frame.to_csv(prices_dir / f"{name}.csv")
+        saved.append((name, len(frame)))
 
-    print("\nHarga saham tersimpan:")
-    for nama, jumlah in tersimpan:
-        print(f"  {nama:<6} {jumlah:>5} baris")
-    if kosong:
-        print(f"  TIDAK ADA DATA: {', '.join(kosong)}")
+    print("\nSaved stock prices:")
+    for name, n_rows in saved:
+        print(f"  {name:<6} {n_rows:>5} rows")
+    if missing:
+        print(f"  MISSING DATA: {', '.join(missing)}")
 
     fx = fetch_jisdor(start, end)
     if not fx.empty:
         fx.to_csv(macro_dir / "jisdor.csv", index=False)
-        print(f"JISDOR USD/IDR: {len(fx)} baris -> {macro_dir / 'jisdor.csv'}")
+        print(f"JISDOR USD/IDR: {len(fx)} rows -> {macro_dir / 'jisdor.csv'}")
         print(
-            f"  rentang {fx['date'].min().date()} s.d. {fx['date'].max().date()}"
-            f" | kurs {fx['rate'].min():,.0f}-{fx['rate'].max():,.0f}"
+            f"  range {fx['date'].min().date()} to {fx['date'].max().date()}"
+            f" | rate {fx['rate'].min():,.0f}-{fx['rate'].max():,.0f}"
         )
 
     bi = fetch_bi_rate()
     bi = bi[(bi["date"] >= pd.Timestamp(start)) & (bi["date"] <= pd.Timestamp(end))]
     bi.to_csv(macro_dir / "bi_7drrr.csv", index=False)
-    print(f"BI-7DRRR     : {len(bi)} pertemuan -> {macro_dir / 'bi_7drrr.csv'}")
+    print(f"BI-7DRRR     : {len(bi)} meetings -> {macro_dir / 'bi_7drrr.csv'}")
     if not bi.empty:
         print(
-            f"  rentang {bi['date'].min().date()} s.d. {bi['date'].max().date()}"
-            f" | suku bunga {bi['rate'].min():.2f}-{bi['rate'].max():.2f}%"
+            f"  range {bi['date'].min().date()} to {bi['date'].max().date()}"
+            f" | rate {bi['rate'].min():.2f}-{bi['rate'].max():.2f}%"
         )
 
     benchmark = data_cfg["sources"].get("benchmark", "^JKSE")
-    indeks = fetch_equities([benchmark], start, end_exclusive)[benchmark]
-    baris_indeks = 0
-    if indeks is not None and not indeks.empty:
-        indeks.to_csv(RAW_DIR / "benchmark_ihsg.csv")
-        baris_indeks = len(indeks)
+    benchmark_frame = fetch_equities([benchmark], start, end_exclusive)[benchmark]
+    benchmark_rows = 0
+    if benchmark_frame is not None and not benchmark_frame.empty:
+        benchmark_frame.to_csv(RAW_DIR / "benchmark_ihsg.csv")
+        benchmark_rows = len(benchmark_frame)
         print(
-            f"\nBenchmark {benchmark:<6}: {baris_indeks} baris"
+            f"\nBenchmark {benchmark:<6}: {benchmark_rows} rows"
             f" -> {RAW_DIR / 'benchmark_ihsg.csv'}"
         )
 
@@ -114,12 +112,12 @@ def main() -> int:
         "fetched_at_utc": datetime.now(UTC).isoformat(timespec="seconds"),
         "period": {"start": start, "end": end},
         "tickers": list(tickers),
-        "missing": kosong,
-        "rows": {nama: jumlah for nama, jumlah in tersimpan},
-        "benchmark": {"ticker": benchmark, "rows": baris_indeks},
+        "missing": missing,
+        "rows": {name: n_rows for name, n_rows in saved},
+        "benchmark": {"ticker": benchmark, "rows": benchmark_rows},
         "sources": {
             "prices": "Yahoo Finance (.JK, adjusted close)",
-            "fx": "Bank Indonesia (JISDOR, kurs referensi resmi)",
+            "fx": "Bank Indonesia (JISDOR, official reference exchange rate)",
             "bi_rate": "Bank Indonesia (bi-rate.aspx)",
             "benchmark": "Yahoo Finance (^JKSE)",
         },

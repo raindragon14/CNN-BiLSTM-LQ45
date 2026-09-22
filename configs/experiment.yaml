@@ -1,17 +1,17 @@
-# Jejak keputusan lengkap: docs/keputusan_desain.md
+# Full decision log: docs/keputusan_desain.md
 #
-# Fitur akhir (Opsi 2), 8 buah. Sitasi tiap fitur:
+# Final features (Option 2), 8 in total. Citation for each feature:
 #   close, volume : Sebastian & Tantia (2024); Sen & Dutta (2021)      [B1, B2]
-#   rsi(14)       : Espiga-Fernandez et al. (2024) Lampiran B.3        [B3]
-#   cci(20)       : Espiga-Fernandez et al. (2024) Lampiran B.4        [B4]
-#   cmo(14)       : Espiga-Fernandez et al. (2024) Lampiran B.5        [B5]
-#   mfi(14)       : Espiga-Fernandez et al. (2024) Lampiran B.6        [B6]
-#   bi_7drrr      : ekstensi (celah Chaweewanchon & Chaysiri 2022)      [B8]
-#   jisdor        : ekstensi (idem)                                     [B9]
-# AROONOSC, Williams %R, STOCHF tidak diambil agar fitur tetap 8.        [B7]
+#   rsi(14)       : Espiga-Fernandez et al. (2024) Appendix B.3        [B3]
+#   cci(20)       : Espiga-Fernandez et al. (2024) Appendix B.4        [B4]
+#   cmo(14)       : Espiga-Fernandez et al. (2024) Appendix B.5        [B5]
+#   mfi(14)       : Espiga-Fernandez et al. (2024) Appendix B.6        [B6]
+#   bi_7drrr      : extension (gap in Chaweewanchon & Chaysiri 2022)   [B8]
+#   jisdor        : extension (same as above)                          [B9]
+# AROONOSC, Williams %R and STOCHF are dropped to keep 8 features.     [B7]
 #
-# B9: jisdor log-return (level non-stasioner). C4: praproses di-fit hanya
-# pada data latih tiap jendela walk-forward.
+# B9: jisdor log-return (non-stationary level). C4: preprocessing is fitted only
+# on the training data of each walk-forward window.
 
 features:
   base: [close, volume]
@@ -22,20 +22,20 @@ features:
     mfi: 14
   macro: [bi_7drrr, jisdor]
   macro_transform:
-    bi_7drrr: level      # B8: hanya berubah bulanan, selisih hampir selalu nol
-    jisdor: log_return   # B9: level non-stasioner
+    bi_7drrr: level      # B8: changes monthly only; differences are almost always zero
+    jisdor: log_return   # B9: non-stationary level
 
 preprocessing:
-  # C1-C3: Sebastian & Tantia (2024) - outlier dicapit lalu diskalakan,
-  # diterapkan pada fitur dan target.
+  # C1-C3: Sebastian & Tantia (2024) - outliers winsorized then scaled,
+  # applied to both features and target.
   winsorize: {method: iqr, multiplier: 1.5}
   scale: min_max
   apply_to: [features, target]
 
 evaluation:
-  # E8: tingkat bebas risiko harian = BI-7DRRR tahunan dibagi 252 (resmi BI).
+  # E8: daily risk-free rate = annual BI-7DRRR divided by 252 (official BI).
   risk_free: {source: bi_7drrr, convention: annual_over_252}
-  # E9: konvensi 252 hari. IDX empiris ~242 hari/tahun; diuji pada sensitivitas.
+  # E9: 252-day convention. IDX is empirically ~242 days/year; tested in the sensitivity analysis.
   annualization: 252
 
 ablation:
@@ -58,15 +58,15 @@ metrics:
   - deflated_sharpe
   - pbo_cscv
 
-# OOS mulai 2020 (train awal 2 tahun)
+# OOS starts in 2020 (initial train of 2 years)
 regimes:
   design_calm:        {start: "2018-01-01", end: "2019-12-31", oos: false}
   covid:              {start: "2020-01-01", end: "2020-12-31", oos: true}
   recovery_rate_hike: {start: "2021-01-01", end: "2025-12-31", oos: true}
 
 significance:
-  # E15: Jobson & Korkie (1981) dikokohkan oleh Ledoit & Wolf (2008) dengan HAC.
-  # Uji asli Jobson-Korkie tidak andal pada distribusi non-normal dan deret waktu.
+  # E15: Jobson & Korkie (1981) reinforced by Ledoit & Wolf (2008) using HAC.
+  # The original Jobson-Korkie test is unreliable for non-normal distributions and time series.
   sharpe_test: ledoit_wolf_hac
-  # E16: Romano & Wolf (2005); kontrol backtest overfitting Bailey et al. (2016).
+  # E16: Romano & Wolf (2005); backtest overfitting control Bailey et al. (2016).
   multiple_testing: romano_wolf

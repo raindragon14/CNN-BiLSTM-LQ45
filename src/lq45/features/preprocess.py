@@ -1,8 +1,8 @@
-"""Praproses robust: winsorization lalu min-max.
+"""Robust preprocessing: winsorization followed by min-max scaling.
 
-Mengikuti Sebastian & Tantia (2024) bagian data pre-processing: outlier
-dicapit memakai aturan boxplot `[Q1 - 1,5*IQR, Q3 + 1,5*IQR]`, lalu data
-diskalakan dengan min-max.
+Following Sebastian & Tantia (2024), data pre-processing section: outliers
+are clipped using the boxplot rule `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]`, then the
+data is scaled with min-max.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ import pandas as pd
 
 @dataclass
 class RobustPreprocessor:
-    """Capit outlier lalu skala tiap kolom ke rentang tetap.
+    """Clip outliers, then scale each column to a fixed range.
 
-    Parameter dihitung pada data latih dan dipakai ulang untuk data lain,
-    sehingga tidak ada kebocoran informasi ke depan.
+    Parameters are computed on the training data and reused for other data,
+    so there is no leakage of future information.
     """
 
     iqr_multiplier: float = 1.5
@@ -28,35 +28,35 @@ class RobustPreprocessor:
     data_max_: pd.Series = field(init=False, repr=False)
 
     def fit(self, frame: pd.DataFrame) -> RobustPreprocessor:
-        """Hitung batas capit dan rentang skala dari data latih."""
+        """Compute the clipping bounds and scaling range from training data."""
         q1 = frame.quantile(0.25)
         q3 = frame.quantile(0.75)
         iqr = q3 - q1
         self.lower_ = q1 - self.iqr_multiplier * iqr
         self.upper_ = q3 + self.iqr_multiplier * iqr
-        dicapit = frame.clip(lower=self.lower_, upper=self.upper_, axis=1)
-        self.data_min_ = dicapit.min()
-        self.data_max_ = dicapit.max()
+        clipped = frame.clip(lower=self.lower_, upper=self.upper_, axis=1)
+        self.data_min_ = clipped.min()
+        self.data_max_ = clipped.max()
         return self
 
     def transform(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Terapkan batas dan skala yang sudah dihitung pada data lain."""
-        dicapit = frame.clip(lower=self.lower_, upper=self.upper_, axis=1)
-        rentang = (self.data_max_ - self.data_min_).replace(0.0, 1.0)
-        rendah, tinggi = self.feature_range
-        return (dicapit - self.data_min_) / rentang * (tinggi - rendah) + rendah
+        """Apply the bounds and scaling already computed on other data."""
+        clipped = frame.clip(lower=self.lower_, upper=self.upper_, axis=1)
+        span = (self.data_max_ - self.data_min_).replace(0.0, 1.0)
+        low, high = self.feature_range
+        return (clipped - self.data_min_) / span * (high - low) + low
 
     def fit_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Hitung parameter dari `frame` lalu langsung menerapkannya."""
+        """Compute parameters from `frame` and apply them immediately."""
         return self.fit(frame).transform(frame)
 
     def inverse_transform(self, frame: pd.DataFrame) -> pd.DataFrame:
-        """Kembalikan data terskala ke ruang asal (invers `transform`).
+        """Map scaled data back to the original space (inverse of `transform`).
 
-        Nilai yang pernah dicapit pada batas winsorization tidak dapat
-        dipulihkan persis; keterbatasan itu diterima untuk pemakaian ini.
+        Values that were clipped at the winsorization bounds cannot be
+        restored exactly; that limitation is accepted for this use case.
         """
-        rentang = (self.data_max_ - self.data_min_).replace(0.0, 1.0)
-        rendah, tinggi = self.feature_range
-        asli = (frame - rendah) / (tinggi - rendah) * rentang + self.data_min_
-        return asli
+        span = (self.data_max_ - self.data_min_).replace(0.0, 1.0)
+        low, high = self.feature_range
+        original = (frame - low) / (high - low) * span + self.data_min_
+        return original

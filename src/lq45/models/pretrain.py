@@ -1,7 +1,7 @@
-"""Masked Autoencoder (MAE) pre-training untuk CNN-BiLSTM.
+"""Masked Autoencoder (MAE) pre-training for CNN-BiLSTM.
 
-Pre-training self-supervised pada data OHLCV + makro (7 channel)
-tanpa label return. Encoder belajar representasi harga universal.
+Self-supervised pre-training on OHLCV + macro data (7 channels) without
+return labels. The encoder learns universal price representations.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from lq45.models.training import set_seed
 
 @dataclass
 class PretrainResult:
-    """Hasil pre-training MAE."""
+    """MAE pre-training result."""
 
     encoder_state: dict[str, Any]
     decoder_state: dict[str, Any]
@@ -36,16 +36,16 @@ def mask_input(
     mask_ratio: float = 0.3,
     generator: torch.Generator | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Masking acak pada dimensi waktu.
+    """Random masking along the time dimension.
 
     Args:
         x: (B, C, T) input tensor
-        mask_ratio: fraksi timestep yang di-mask
-        generator: RNG untuk reproducibility
+        mask_ratio: fraction of timesteps to mask
+        generator: RNG for reproducibility
 
     Returns:
-        x_masked: (B, C, T) dengan posisi masked = 0
-        mask: (B, T) boolean, True = posisi yang di-mask
+        x_masked: (B, C, T) new copy; masked positions per sample = 0
+        mask: (B, T) boolean, True = masked positions (per sample)
     """
     B, _, T = x.shape
     n_mask = int(T * mask_ratio)
@@ -55,8 +55,7 @@ def mask_input(
         idx = torch.randperm(T, generator=generator, device=x.device)[:n_mask]
         mask[b, idx] = True
 
-    x_masked = x.clone()
-    x_masked[:, :, mask.any(dim=0)] = 0  # zero-out masked timesteps across all channels
+    x_masked = x.masked_fill(mask.unsqueeze(1), 0.0)  # (B,1,T) broadcast over channels
     return x_masked, mask
 
 
@@ -65,70 +64,23 @@ def mae_loss(
     target: torch.Tensor,
     mask: torch.Tensor,
 ) -> torch.Tensor:
-    """MSE loss hanya pada posisi yang di-mask.
+    """MSE loss only at masked positions.
 
     Args:
-        pred: (B, C, T) prediksi decoder
-        target: (B, C, T) target asli
+        pred: (B, C, T) decoder predictions
+        target: (B, C, T) original targets
         mask: (B, T) boolean mask
 
     Returns:
         Scalar loss
     """
-    # Expand mask ke channel dimension
+    # Expand the mask to the channel dimension
     mask_expanded = mask.unsqueeze(1).expand_as(pred)  # (B, C, T)
     diff = (pred - target) ** 2
     masked_diff = diff[mask_expanded]
     if masked_diff.numel() == 0:
         return torch.tensor(0.0, device=pred.device, dtype=pred.dtype)
     return masked_diff.mean()
-
-
-def build_pretrain_data(
-    panel: Any,
-    lookback: int,
-    pretrain_channels: list[str],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Bangun data pre-train dari panel OHLCV + makro.
-
-    Args:
-        panel: PanelData dengan features mentah
-        lookback: panjang jendela
-        pretrain_channels: list nama channel untuk pre-train (7 channel)
-
-    Returns:
-        X: (N, C, lookback) tanpa label
-        dates_idx: (N,) posisi tanggal
-    """
-    # Indeks channel yang dipakai untuk pre-train
-    from lq45.models.dataset import FEATURE_COLUMNS, build_windows
-
-    channel_idx = [FEATURE_COLUMNS.index(c) for c in pretrain_channels]
-
-    daftar_x: list[np.ndarray] = []
-    daftar_idx: list[np.ndarray] = []
-
-    for ticker in panel.tickers:
-        feat = panel.features[ticker][:, channel_idx]  # (T, 7)
-        # Gunakan seluruh timeline tanpa label, tanpa banned
-        x, _, idx = build_windows(
-            feat,
-            np.zeros(len(feat)),  # dummy target
-            lookback,
-            0,
-            len(feat),
-            [],
-        )
-        if len(x):
-            daftar_x.append(x)
-            daftar_idx.append(idx)
-
-    if not daftar_x:
-        raise ValueError("tidak ada data pre-train")
-
-    X = np.concatenate(daftar_x, axis=0)
-    idx = np.concatenate(daftar_idx, axis=0)
-    return X, idx
 
 
 def pretrain_mae(
@@ -145,15 +97,15 @@ def pretrain_mae(
     device: torch.device | None = None,
     seed: int = 0,
 ) -> PretrainResult:
-    """Latih MAE: encoder + decoder merekonstruksi timestep yang di-mask.
+    """Train the MAE: encoder + decoder reconstruct the masked timesteps.
 
     Args:
         encoder: CNNBiLSTMEncoder
         decoder: MAEDecoder
-        train_x: (N, C, lookback) data latih
-        val_x: (N, C, lookback) data validasi
-        mask_ratio: fraksi masking
-        epochs: max epoch
+        train_x: (N, C, lookback) training data
+        val_x: (N, C, lookback) validation data
+        mask_ratio: masking fraction
+        epochs: max epochs
         lr: learning rate
         weight_decay: weight decay
         batch_size: batch size
@@ -162,7 +114,7 @@ def pretrain_mae(
         seed: random seed
 
     Returns:
-        PretrainResult dengan best encoder/decoder state
+        PretrainResult with the best encoder/decoder state
     """
     if device is None:
         device = torch.device("cpu")
@@ -207,7 +159,7 @@ def pretrain_mae(
 
         train_loss = float(np.mean(train_losses))
 
-        # Validasi
+        # Validation
         encoder.eval()
         decoder.eval()
         val_losses = []
@@ -256,5 +208,5 @@ def load_pretrained_encoder(
     encoder: CNNBiLSTMEncoder,
     state_dict: dict[str, Any],
 ) -> None:
-    """Load pretrained weights ke encoder."""
+    """Load pre-trained weights into the encoder."""
     encoder.load_state_dict(state_dict)

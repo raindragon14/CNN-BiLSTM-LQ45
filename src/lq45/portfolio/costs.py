@@ -1,11 +1,11 @@
-"""Simulasi biaya transaksi ritel Indonesia dengan lot 100 lembar.
+"""Indonesian retail transaction-cost simulation with 100-share lots.
 
-Dasar (rincian: docs/keputusan_desain.md):
-- Fee beli 0,19%, fee jual 0,29%, lot 100 lembar mengikuti ketentuan
-  sekuritas ritel Indonesia (A8).
-- Rebalancing bulanan 21 hari bursa: Espiga-Fernandez et al. (2024)
-  memakai rebalancing periodik yang hemat biaya; Huang et al. (2024)
-  memakai horizon bulanan (E4).
+Basis (details: docs/keputusan_desain.md):
+- Buy fee 0.19%, sell fee 0.29%, 100-share lot following Indonesian
+  retail securities rules (A8).
+- Monthly rebalancing every 21 trading days: Espiga-Fernandez et al.
+  (2024) use cost-efficient periodic rebalancing; Huang et al. (2024)
+  use a monthly horizon (E4).
 """
 
 from __future__ import annotations
@@ -15,48 +15,48 @@ import math
 import pandas as pd
 
 
-def target_lembar(
-    bobot: pd.Series,
-    harga: pd.Series,
-    ekuitas: float,
+def target_shares(
+    weights: pd.Series,
+    prices: pd.Series,
+    equity: float,
     lot: int = 100,
 ) -> pd.Series:
-    """Jumlah lembar target per saham dibulatkan ke bawah ke kelipatan lot.
+    """Target number of shares per stock, floored to a multiple of the lot.
 
-    Dana yang tidak cukup untuk satu lot menjadi kas.
+    Funds insufficient for one lot remain as cash.
     """
-    lembar: dict[str, int] = {}
-    for ticker, w in bobot.items():
-        p = float(harga.get(ticker, float("nan")))
+    shares: dict[str, int] = {}
+    for ticker, w in weights.items():
+        p = float(prices.get(ticker, float("nan")))
         if not math.isfinite(p) or p <= 0 or w <= 0:
-            lembar[ticker] = 0
+            shares[ticker] = 0
             continue
-        unit = int((float(w) * ekuitas) // (p * lot))
-        lembar[ticker] = unit * lot
-    return pd.Series(lembar, dtype=float)
+        unit = int((float(w) * equity) // (p * lot))
+        shares[ticker] = unit * lot
+    return pd.Series(shares, dtype=float)
 
 
-def nilai_transaksi(
-    lama: pd.Series,
-    baru: pd.Series,
-    harga: pd.Series,
-    fee_beli: float = 0.0019,
-    fee_jual: float = 0.0029,
+def transaction_value(
+    old: pd.Series,
+    new: pd.Series,
+    prices: pd.Series,
+    buy_fee: float = 0.0019,
+    sell_fee: float = 0.0029,
 ) -> tuple[float, float]:
-    """Nilai jual-beli dan total fee dari perubahan posisi.
+    """Trade value and total fee from the change in positions.
 
-    Mengembalikan (arus_kas_bersih, fee). Arus kas bersih positif
-    berarti penjualan melebihi pembelian sebelum fee.
+    Returns (net_cash_flow, fee). A positive net cash flow means sales
+    exceed purchases before fees.
     """
-    semua = set(lama.index) | set(baru.index) | set(harga.index)
-    beli = 0.0
-    jual = 0.0
-    for ticker in semua:
-        p = float(harga.get(ticker, 0.0) or 0.0)
-        delta = float(baru.get(ticker, 0.0)) - float(lama.get(ticker, 0.0))
+    all_tickers = set(old.index) | set(new.index) | set(prices.index)
+    buys = 0.0
+    sells = 0.0
+    for ticker in all_tickers:
+        p = float(prices.get(ticker, 0.0) or 0.0)
+        delta = float(new.get(ticker, 0.0)) - float(old.get(ticker, 0.0))
         if delta > 0:
-            beli += delta * p
+            buys += delta * p
         elif delta < 0:
-            jual += -delta * p
-    fee = beli * fee_beli + jual * fee_jual
-    return jual - beli, fee
+            sells += -delta * p
+    fee = buys * buy_fee + sells * sell_fee
+    return sells - buys, fee

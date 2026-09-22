@@ -1,11 +1,11 @@
-"""Pengambilan data mentah dari sumber eksternal.
+"""Raw data fetching from external sources.
 
-Sumber:
-- Harga saham ``.JK``: Yahoo Finance.
-- Kurs USD/IDR (JISDOR) dan BI-7DRRR: Bank Indonesia.
+Sources:
+- Stock prices ``.JK``: Yahoo Finance.
+- USD/IDR exchange rate (JISDOR) and BI-7DRRR: Bank Indonesia.
 
-Fungsi di sini mengembalikan data apa adanya; pembersihan dikerjakan pada
-tahap berikutnya (``02_build_features.py``).
+The functions here return the data as-is; cleaning is done at the next stage
+(``02_build_features.py``).
 """
 
 from __future__ import annotations
@@ -30,22 +30,22 @@ _USER_AGENT = (
 
 
 def _session() -> requests.Session:
-    """Buat sesi HTTP dengan User-Agent peramban."""
+    """Create an HTTP session with a browser User-Agent."""
     session = requests.Session()
     session.headers.update({"User-Agent": _USER_AGENT})
     return session
 
 
 def _request(session: requests.Session, method: str, **kwargs) -> requests.Response:
-    """Permintaan HTTP dengan percobaan ulang sederhana."""
+    """HTTP request with simple retries."""
     last_error: Exception | None = None
     for attempt in range(4):
         try:
             return getattr(session, method)(**kwargs)
-        except requests.RequestException as exc:  # koneksi situs BI kerap putus
+        except requests.RequestException as exc:  # the BI site often drops connections
             last_error = exc
             time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"permintaan gagal setelah 4 percobaan: {last_error}")
+    raise RuntimeError(f"request failed after 4 attempts: {last_error}")
 
 
 def fetch_equities(
@@ -54,14 +54,14 @@ def fetch_equities(
     end: str,
     retries: int = 3,
 ) -> dict[str, pd.DataFrame]:
-    """Unduh OHLCV harian per ticker melalui Yahoo Finance.
+    """Download daily OHLCV per ticker via Yahoo Finance.
 
-    ``auto_adjust=False`` agar ``Adj Close`` terpisah dari ``Close``. Ticker
-    tanpa data (misalnya delisting) dipetakan ke ``None``.
+    ``auto_adjust=False`` keeps ``Adj Close`` separate from ``Close``. Tickers
+    without data (for example delisted ones) are mapped to ``None``.
     """
     import yfinance as yf
 
-    hasil: dict[str, pd.DataFrame] = {}
+    results: dict[str, pd.DataFrame] = {}
     for ticker in tickers:
         frame: pd.DataFrame | None = None
         for attempt in range(retries):
@@ -80,101 +80,103 @@ def fetch_equities(
                     raise
                 time.sleep(2)
         if frame is None or frame.empty:
-            hasil[ticker] = None
+            results[ticker] = None
             continue
         if isinstance(frame.columns, pd.MultiIndex):
             frame.columns = frame.columns.get_level_values(0)
         frame.index.name = "Date"
-        hasil[ticker] = frame
+        results[ticker] = frame
         time.sleep(0.4)
-    return hasil
+    return results
 
 
 def _xlsx_rows(content: bytes) -> list[dict[str, str]]:
-    """Baca baris lembar pertama ``.xlsx`` tanpa pustaka tambahan.
+    """Read the first sheet's rows of an ``.xlsx`` without extra libraries.
 
-    Hanya menangani ekspor satu lembar dari Bank Indonesia: teks bersama dan
-    angka langsung, tanpa rumus.
+    Only handles single-sheet exports from Bank Indonesia: shared strings and
+    inline numbers, without formulas.
     """
-    with zipfile.ZipFile(io.BytesIO(content)) as berkas:
-        bersama: list[str] = []
-        if "xl/sharedStrings.xml" in berkas.namelist():
-            akar = ElementTree.fromstring(berkas.read("xl/sharedStrings.xml"))
-            for si in akar.findall(f"{_XLSX_NS}si"):
-                bersama.append("".join(t.text or "" for t in si.iter(f"{_XLSX_NS}t")))
-        lembar = ElementTree.fromstring(berkas.read("xl/worksheets/sheet1.xml"))
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        shared: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            root = ElementTree.fromstring(archive.read("xl/sharedStrings.xml"))
+            for si in root.findall(f"{_XLSX_NS}si"):
+                shared.append("".join(t.text or "" for t in si.iter(f"{_XLSX_NS}t")))
+        sheet = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
 
-    baris: list[dict[str, str]] = []
-    for row in lembar.iter(f"{_XLSX_NS}row"):
-        sel: dict[str, str] = {}
+    rows: list[dict[str, str]] = []
+    for row in sheet.iter(f"{_XLSX_NS}row"):
+        cell_values: dict[str, str] = {}
         for c in row.findall(f"{_XLSX_NS}c"):
             ref = c.get("r", "")
-            kolom = re.match(r"[A-Z]+", ref).group(0)
-            nilai = c.find(f"{_XLSX_NS}v")
-            if c.get("t") == "s" and nilai is not None:
-                sel[kolom] = bersama[int(nilai.text)]
+            column = re.match(r"[A-Z]+", ref).group(0)
+            value = c.find(f"{_XLSX_NS}v")
+            if c.get("t") == "s" and value is not None:
+                cell_values[column] = shared[int(value.text)]
             else:
-                sel[kolom] = nilai.text if nilai is not None else ""
-        baris.append(sel)
-    return baris
+                cell_values[column] = value.text if value is not None else ""
+        rows.append(cell_values)
+    return rows
 
 
 def fetch_jisdor(start: str, end: str) -> pd.DataFrame:
-    """Unduh kurs referensi resmi JISDOR (USD/IDR) dari Bank Indonesia.
+    """Download the official JISDOR reference rate (USD/IDR) from Bank Indonesia.
 
-    Situs BI menyediakan pemilih rentang tanggal dan tombol ekspor; fungsi ini
-    menirukan permintaan tersebut lalu membaca berkas ``.xlsx`` hasilnya.
-    Kolom keluaran: ``date`` dan ``rate`` (rupiah per 1 USD).
+    The BI site provides a date-range selector and an export button; this
+    function mimics that request and then reads the resulting ``.xlsx`` file.
+    Output columns: ``date`` and ``rate`` (rupiah per 1 USD).
     """
     session = _session()
     html = _request(session, "get", url=BI_JISDOR_URL, timeout=25).text
 
-    awalan = re.search(r'name="([^"]*TextBoxFrom)"', html)
-    if awalan is None:
-        raise RuntimeError("kontrol rentang tanggal JISDOR tidak ditemukan")
-    prefix = awalan.group(1).rsplit("TextBoxFrom", 1)[0]
+    prefix_match = re.search(r'name="([^"]*TextBoxFrom)"', html)
+    if prefix_match is None:
+        raise RuntimeError("JISDOR date-range control not found")
+    prefix = prefix_match.group(1).rsplit("TextBoxFrom", 1)[0]
 
-    awal = pd.Timestamp(start).strftime("%d/%m/%Y")
-    akhir = pd.Timestamp(end).strftime("%d/%m/%Y")
-    muatan = _bi_hidden(html)
-    muatan[prefix + "TextBoxFrom"] = awal
-    muatan[prefix + "TextBoxDateTo"] = akhir
-    muatan[prefix + "HiddenFieldDateFrom"] = awal
-    muatan[prefix + "HiddenFieldDateTo"] = akhir
-    muatan[prefix + "ButtonExport"] = "Unduh"
+    start_text = pd.Timestamp(start).strftime("%d/%m/%Y")
+    end_text = pd.Timestamp(end).strftime("%d/%m/%Y")
+    payload = _bi_hidden(html)
+    payload[prefix + "TextBoxFrom"] = start_text
+    payload[prefix + "TextBoxDateTo"] = end_text
+    payload[prefix + "HiddenFieldDateFrom"] = start_text
+    payload[prefix + "HiddenFieldDateTo"] = end_text
+    payload[prefix + "ButtonExport"] = "Unduh"
 
-    respon = _request(session, "post", url=BI_JISDOR_URL, data=muatan, timeout=120)
-    if respon.content[:2] != b"PK":
-        raise RuntimeError("ekspor JISDOR bukan berkas .xlsx")
+    response = _request(session, "post", url=BI_JISDOR_URL, data=payload, timeout=120)
+    if response.content[:2] != b"PK":
+        raise RuntimeError("JISDOR export is not an .xlsx file")
 
-    catatan: list[dict[str, object]] = []
-    for sel in _xlsx_rows(respon.content):
-        tanggal = sel.get("B", "")
-        kurs = sel.get("C", "")
-        if not tanggal or not kurs:
+    records: list[dict[str, object]] = []
+    for cell in _xlsx_rows(response.content):
+        date_text = cell.get("B", "")
+        rate_text = cell.get("C", "")
+        if not date_text or not rate_text:
             continue
-        waktu = pd.to_datetime(tanggal, format="%m/%d/%Y %I:%M:%S %p", errors="coerce")
-        if pd.isna(waktu):
+        timestamp = pd.to_datetime(
+            date_text, format="%m/%d/%Y %I:%M:%S %p", errors="coerce"
+        )
+        if pd.isna(timestamp):
             continue
         try:
-            nilai = float(kurs)
+            value = float(rate_text)
         except ValueError:
             continue
-        catatan.append({"date": waktu, "rate": nilai})
-    hasil = pd.DataFrame(catatan).dropna(subset=["date"])
-    return hasil.sort_values("date").reset_index(drop=True)
+        records.append({"date": timestamp, "rate": value})
+    result = pd.DataFrame(records).dropna(subset=["date"])
+    return result.sort_values("date").reset_index(drop=True)
 
 
 def _bi_table(html: str) -> pd.DataFrame:
-    """Baca tabel pertama dari HTML halaman Bank Indonesia."""
-    tabel = pd.read_html(io.StringIO(html))
-    frame = tabel[0]
+    """Read the first table from the Bank Indonesia page HTML."""
+    tables = pd.read_html(io.StringIO(html))
+    frame = tables[0]
     frame.columns = [str(column).strip() for column in frame.columns]
     return frame
 
 
 def _bi_next_target(html: str) -> str | None:
-    """Nama tombol "Next" pada DataPager bila masih aktif."""
+    """Name of the "Next" button in the DataPager while it is still active."""
     for match in re.finditer(r"<input type=\"image\"[^>]*>", html):
         tag = match.group(0)
         if "DataPagerBI7DRR" in tag and "next" in tag and "disabled" not in tag:
@@ -183,7 +185,7 @@ def _bi_next_target(html: str) -> str | None:
 
 
 def _bi_hidden(html: str) -> dict[str, str]:
-    """Kumpulkan seluruh input tersembunyi pada formulir ASP.NET."""
+    """Collect all hidden inputs of the ASP.NET form."""
     return {
         match.group(1): match.group(2)
         for match in re.finditer(
@@ -193,23 +195,22 @@ def _bi_hidden(html: str) -> dict[str, str]:
 
 
 def fetch_bi_rate(max_pages: int = 40) -> pd.DataFrame:
-    """Ambil seluruh riwayat keputusan BI-7DRRR (suku bunga acuan).
+    """Fetch the full history of BI-7DRRR decisions (the reference rate).
 
-    Halaman indikator menampilkan 10 pertemuan per halaman; fungsi ini
-    menelusuri seluruh halaman lalu mengembalikan kolom ``date`` dan ``rate``
-    (dalam persen).
+    The indicator page shows 10 meetings per page; this function walks all
+    pages and then returns the ``date`` and ``rate`` columns (in percent).
     """
     session = _session()
     response = _request(session, "get", url=BI_RATE_URL, timeout=25)
     html = response.text
 
-    catatan: dict[int, tuple[str, float]] = {}
+    records: dict[int, tuple[str, float]] = {}
     for _ in range(max_pages):
         frame = _bi_table(html)
-        for _, baris in frame.iterrows():
-            catatan[int(baris.iloc[0])] = (
-                str(baris.iloc[1]),
-                float(str(baris.iloc[2]).replace("%", "").strip()),
+        for _, row in frame.iterrows():
+            records[int(row.iloc[0])] = (
+                str(row.iloc[1]),
+                float(str(row.iloc[2]).replace("%", "").strip()),
             )
         target = _bi_next_target(html)
         if target is None:
@@ -222,16 +223,16 @@ def fetch_bi_rate(max_pages: int = 40) -> pd.DataFrame:
         html = _request(session, "post", url=BI_RATE_URL, data=payload, timeout=30).text
         time.sleep(0.6)
 
-    if not catatan:
-        raise RuntimeError("tabel BI-7DRRR tidak terbaca")
+    if not records:
+        raise RuntimeError("BI-7DRRR table could not be read")
 
-    # Nomor urut menurun terhadap waktu; urutkan naik menurut tanggal.
-    baris = [
+    # Sequence numbers decrease over time; sort ascending by date.
+    rows = [
         {
-            "date": pd.to_datetime(periode, format="%d %B %Y"),
+            "date": pd.to_datetime(period, format="%d %B %Y"),
             "rate": rate,
         }
-        for periode, rate in catatan.values()
+        for period, rate in records.values()
     ]
-    hasil = pd.DataFrame(baris).sort_values("date").reset_index(drop=True)
-    return hasil
+    result = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
+    return result

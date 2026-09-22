@@ -1,7 +1,7 @@
-"""CNN-BiLSTM Encoder untuk pre-training dan fine-tuning.
+"""CNN-BiLSTM encoder for pre-training and fine-tuning.
 
-Diekstrak dari CNNBiLSTM agar bisa dipakai sebagai backbone terpisah.
-Arsitektur identik dengan CNNBiLSTM.forward() hingga output BiLSTM.
+Extracted from CNNBiLSTM so it can be used as a standalone backbone.
+Architecture identical to CNNBiLSTM.forward() up to the BiLSTM output.
 """
 
 from __future__ import annotations
@@ -13,12 +13,12 @@ from torch import nn
 
 
 class CNNBiLSTMEncoder(nn.Module):
-    """Encoder CNN dua lapis + BiLSTM dua lapis.
+    """Two-layer CNN encoder + two-layer BiLSTM.
 
-    Masukan: (B, F, w) mengikuti konvensi Conv1d.
-    Keluaran:
-      - return_sequence=True:  (B, L, H) urutan penuh BiLSTM
-      - return_sequence=False: (B, H)   langkah terakhir (untuk fine-tune head)
+    Input: (B, F, w) following the Conv1d convention.
+    Output:
+      - return_sequence=True:  (B, L, H) full BiLSTM sequence
+      - return_sequence=False: (B, H)   last step (for fine-tuning the head)
     """
 
     def __init__(
@@ -37,19 +37,21 @@ class CNNBiLSTMEncoder(nn.Module):
     ) -> None:
         super().__init__()
         if activation != "relu":
-            raise ValueError(f"aktivasi tidak didukung: {activation}")
+            raise ValueError(f"unsupported activation: {activation}")
 
         # CNN blocks
-        blok: list[nn.Module] = []
-        masuk = n_features
-        for keluar in filters:
+        blocks: list[nn.Module] = []
+        in_channels = n_features
+        for out_channels in filters:
             padding = kernel_size // 2  # 'same'
-            blok.append(nn.Conv1d(masuk, keluar, kernel_size, padding=padding))
+            blocks.append(
+                nn.Conv1d(in_channels, out_channels, kernel_size, padding=padding)
+            )
             if batchnorm:
-                blok.append(nn.BatchNorm1d(keluar))
-            blok.append(nn.ReLU())
-            masuk = keluar
-        self.conv = nn.Sequential(*blok)
+                blocks.append(nn.BatchNorm1d(out_channels))
+            blocks.append(nn.ReLU())
+            in_channels = out_channels
+        self.conv = nn.Sequential(*blocks)
         self.pool = nn.MaxPool1d(pooling)
         self.dropout_cnn = nn.Dropout(dropout_cnn)
 
@@ -67,14 +69,14 @@ class CNNBiLSTMEncoder(nn.Module):
         self.layers = layers
 
     def forward(self, x: torch.Tensor, return_sequence: bool = False) -> torch.Tensor:
-        """Terapkan CNN -> Pool -> Dropout -> BiLSTM.
+        """Apply CNN -> Pool -> Dropout -> BiLSTM.
 
         Args:
             x: (B, F, w)
             return_sequence: True -> (B, L, H*dir), False -> (B, H*dir)
 
         Returns:
-            Tensor sesuai return_sequence.
+            Tensor according to `return_sequence`.
         """
         x = self.conv(x)  # (B, C, w)
         x = self.pool(x)  # (B, C, w // p)
@@ -87,6 +89,6 @@ class CNNBiLSTMEncoder(nn.Module):
 
     @property
     def output_dim(self) -> int:
-        """Dimensi output per timestep (H * 2 jika bidirectional)."""
-        arah = 2 if self.bidirectional else 1
-        return self.units * arah
+        """Output dimension per timestep (H * 2 if bidirectional)."""
+        directions = 2 if self.bidirectional else 1
+        return self.units * directions

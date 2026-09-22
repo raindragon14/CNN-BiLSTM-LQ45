@@ -1,16 +1,16 @@
-"""Estimator kovarians untuk optimasi varians minimum.
+"""Covariance estimators for minimum-variance optimization.
 
-Dasar (rincian: docs/keputusan_desain.md):
-- Perbandingan empat estimator, bukan asumsi satu pemenang:
-  DeMiguel et al. (2009) menunjukkan 1/N sulit dikalahkan sehingga
-  klaim keunggulan estimator harus diuji; Ledoit & Wolf (2004)
-  mengusulkan penyusutan untuk kovarians berdimensi besar.
-- Ridge epsilon = 1e-4 menstabilkan diagonal (E11).
-- Jendela L = 120 hari bursa; sensitivitas 60 dan 252 (E17).
-- Lebel `gmv` memakai kovarians sampel seperti Huang et al. (2024)
-  yang memakai Global Minimum Variance pada tahap kedua; hasilnya
-  sama dengan `sample` pada kendala yang sama dan dipertahankan
-  sebagai pembanding bernama.
+Basis (details: docs/keputusan_desain.md):
+- Comparison of four estimators rather than assuming a single winner:
+  DeMiguel et al. (2009) show that 1/N is hard to beat, so any claim of
+  estimator superiority must be tested; Ledoit & Wolf (2004) propose
+  shrinkage for high-dimensional covariance matrices.
+- Ridge epsilon = 1e-4 stabilizes the diagonal (E11).
+- Window L = 120 trading days; sensitivity at 60 and 252 (E17).
+- The `gmv` label uses the sample covariance as in Huang et al. (2024),
+  who use Global Minimum Variance in the second stage; it yields the
+  same result as `sample` under identical constraints and is kept as a
+  named comparison baseline.
 """
 
 from __future__ import annotations
@@ -20,38 +20,36 @@ import pandas as pd
 from sklearn.covariance import LedoitWolf
 
 
-def matriks_imbal_hasil(harga: pd.DataFrame, akhir: str, hari: int) -> pd.DataFrame:
-    """Imbal hasil log harian untuk jendela `(akhir-hari, akhir]`.
+def returns_matrix(prices: pd.DataFrame, end: str, days: int) -> pd.DataFrame:
+    """Daily log returns for the window `(end-days, end]`.
 
-    `harga` berindeks tanggal dengan kolom per ticker (Adj Close).
-    Hanya memakai data sampai tanggal `akhir` agar tidak melihat
-    masa depan. Baris ber-NaN dibuang per kolom nanti oleh pemanggil.
+    `prices` is indexed by date with one column per ticker (Adj Close).
+    Only data up to `end` is used so the future is never observed. Rows
+    with NaN are dropped per column later by the caller.
     """
-    potong = harga[harga.index <= akhir].tail(hari + 1)
-    imbal = np.log(potong / potong.shift(1)).iloc[1:]
-    return imbal
+    window = prices[prices.index <= end].tail(days + 1)
+    returns = np.log(window / window.shift(1)).iloc[1:]
+    return returns
 
 
-def taksir_kovarians(
-    imbal: pd.DataFrame, metode: str, ridge_epsilon: float = 1e-4
+def estimate_covariance(
+    returns: pd.DataFrame, method: str, ridge_epsilon: float = 1e-4
 ) -> pd.DataFrame:
-    """Taksir matriks kovarians harian dari imbal hasil.
+    """Estimate the daily covariance matrix from returns.
 
-    Metode: `sample`, `ridge_epsilon`, `ledoit_wolf`, `gmv`.
-    `gmv` memakai kovarians sampel (sama dengan `sample`).
+    Methods: `sample`, `ridge_epsilon`, `ledoit_wolf`, `gmv`.
+    `gmv` uses the sample covariance (identical to `sample`).
     """
-    bersih = imbal.dropna(axis=1)
-    if bersih.shape[1] == 0:
-        raise ValueError("tidak ada kolom imbal hasil yang lengkap")
-    if metode in ("sample", "gmv"):
-        return bersih.cov()
-    if metode == "ridge_epsilon":
-        kov = bersih.cov().to_numpy()
-        kov = kov + ridge_epsilon * np.eye(kov.shape[0])
-        return pd.DataFrame(kov, index=bersih.columns, columns=bersih.columns)
-    if metode == "ledoit_wolf":
-        lw = LedoitWolf().fit(bersih.to_numpy())
-        return pd.DataFrame(
-            lw.covariance_, index=bersih.columns, columns=bersih.columns
-        )
-    raise ValueError(f"metode kovarians tidak dikenal: {metode}")
+    clean = returns.dropna(axis=1)
+    if clean.shape[1] == 0:
+        raise ValueError("no complete return columns")
+    if method in ("sample", "gmv"):
+        return clean.cov()
+    if method == "ridge_epsilon":
+        cov = clean.cov().to_numpy()
+        cov = cov + ridge_epsilon * np.eye(cov.shape[0])
+        return pd.DataFrame(cov, index=clean.columns, columns=clean.columns)
+    if method == "ledoit_wolf":
+        lw = LedoitWolf().fit(clean.to_numpy())
+        return pd.DataFrame(lw.covariance_, index=clean.columns, columns=clean.columns)
+    raise ValueError(f"unknown covariance method: {method}")

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Tahap 2: bersihkan data mentah lalu bangun fitur dan target.
+"""Stage 2: clean the raw data, then build features and targets.
 
-Menghasilkan:
-- ``data/interim/prices_clean/<TICKER>.csv``: OHLCV selaras kalender bursa
-- ``data/processed/features/<TICKER>.csv``  : 8 fitur + kolom ``target``
+Outputs:
+- ``data/interim/prices_clean/<TICKER>.csv``: OHLCV aligned to the exchange calendar
+- ``data/processed/features/<TICKER>.csv``  : 8 features + the ``target`` column
 
-Spesifikasi fitur: configs/experiment.yaml
-Jejak keputusan: docs/keputusan_desain.md
+Feature specification: configs/experiment.yaml
+Decision log: docs/keputusan_desain.md
 """
 
 from __future__ import annotations
@@ -31,20 +31,20 @@ from lq45.utils.config import (
 
 
 def parse_args() -> argparse.Namespace:
-    """Baca argumen baris perintah."""
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Bangun fitur dan target dari data mentah."
+        description="Build features and targets from the raw data."
     )
     return parser.parse_args()
 
 
-def nama_berkas(ticker: str) -> str:
-    """Nama berkas tanpa akhiran `.JK`."""
+def stock_file_name(ticker: str) -> str:
+    """File name without the `.JK` suffix."""
     return ticker.replace(".JK", "")
 
 
 def main() -> int:
-    """Bangun fitur dan target untuk seluruh saham kandidat."""
+    """Build features and targets for every candidate stock."""
     parse_args()
 
     data_cfg = load_config("data")
@@ -57,62 +57,62 @@ def main() -> int:
     periods = exp_cfg["features"]["indicators"]
     macro_transform = exp_cfg["features"]["macro_transform"]
 
-    # Kalender bursa diambil dari IHSG.
+    # The exchange calendar is taken from IHSG.
     ihsg = pd.read_csv(RAW_DIR / "benchmark_ihsg.csv", parse_dates=["Date"])
     calendar = pd.DatetimeIndex(ihsg["Date"]).sort_values()
     print(
-        f"Kalender bursa : {len(calendar)} hari"
-        f" ({calendar.min().date()} s.d. {calendar.max().date()})"
+        f"Exchange calendar : {len(calendar)} days"
+        f" ({calendar.min().date()} to {calendar.max().date()})"
     )
 
     jisdor = pd.read_csv(RAW_DIR / "macro" / "jisdor.csv", parse_dates=["date"])
     bi_rate = pd.read_csv(RAW_DIR / "macro" / "bi_7drrr.csv", parse_dates=["date"])
     macro = build_macro(jisdor, bi_rate, calendar, macro_transform)
 
-    mentah: dict[str, pd.DataFrame] = {}
+    raw: dict[str, pd.DataFrame] = {}
     for ticker in tickers:
-        path = RAW_DIR / "prices" / f"{nama_berkas(ticker)}.csv"
+        path = RAW_DIR / "prices" / f"{stock_file_name(ticker)}.csv"
         if not path.exists():
             continue
         frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date")
-        mentah[ticker] = clean_prices(frame, calendar, ffill_days)
+        raw[ticker] = clean_prices(frame, calendar, ffill_days)
 
-    panel = build_panel(mentah, calendar, macro, horizon, periods)
+    panel = build_panel(raw, calendar, macro, horizon, periods)
 
     interim_dir = INTERIM_DIR / "prices_clean"
     processed_dir = PROCESSED_DIR / "features"
     ensure_dirs(interim_dir, processed_dir)
 
-    for ticker, bersih in mentah.items():
-        bersih.to_csv(interim_dir / f"{nama_berkas(ticker)}.csv")
-    for ticker, fitur in panel.items():
-        fitur.to_csv(processed_dir / f"{nama_berkas(ticker)}.csv")
+    for ticker, clean in raw.items():
+        clean.to_csv(interim_dir / f"{stock_file_name(ticker)}.csv")
+    for ticker, features in panel.items():
+        features.to_csv(processed_dir / f"{stock_file_name(ticker)}.csv")
 
-    kolom = list(next(iter(panel.values())).columns)
-    ringkas = pd.DataFrame(
+    column = list(next(iter(panel.values())).columns)
+    summary = pd.DataFrame(
         {
-            "terisi": {
-                k: int(sum(fitur[k].notna().sum() for fitur in panel.values()))
-                for k in kolom
+            "filled": {
+                k: int(sum(features[k].notna().sum() for features in panel.values()))
+                for k in column
             },
-            "kosong": {
-                k: int(sum(fitur[k].isna().sum() for fitur in panel.values()))
-                for k in kolom
+            "missing": {
+                k: int(sum(features[k].isna().sum() for features in panel.values()))
+                for k in column
             },
         }
     )
-    ringkas["total"] = ringkas["terisi"] + ringkas["kosong"]
-    lengkap = int(
-        sum(fitur[kolom].notna().all(axis=1).sum() for fitur in panel.values())
+    summary["total"] = summary["filled"] + summary["missing"]
+    complete_rows = int(
+        sum(features[column].notna().all(axis=1).sum() for features in panel.values())
     )
-    print(f"\nSaham diproses : {len(panel)}")
+    print(f"\nStocks processed : {len(panel)}")
     print(
-        f"Baris lengkap  : {lengkap} dari {ringkas['total'].max()}"
-        " (seluruh fitur + target terisi)"
+        f"Complete rows    : {complete_rows} of {summary['total'].max()}"
+        " (all features + target filled)"
     )
-    print(f"Kolom keluaran : {', '.join(kolom)}")
-    print("\nRekap per kolom (agregat lintas saham):")
-    print(ringkas.to_string())
+    print(f"Output columns   : {', '.join(column)}")
+    print("\nPer-column summary (aggregated across stocks):")
+    print(summary.to_string())
     print(f"\nInterim   : {interim_dir}")
     print(f"Processed : {processed_dir}")
     return 0

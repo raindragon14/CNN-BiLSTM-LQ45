@@ -1,6 +1,6 @@
 selection:
-  k_values: [5, 7, 10]           # grid utama RQ2
-  k_sensitivity: [3, 15, 20]     # perluasan kurva Sharpe vs k
+  k_values: [5, 7, 10]           # main RQ2 grid
+  k_sensitivity: [3, 15, 20]     # extension of the Sharpe vs k curve
 
 covariance:
   lookback_days: 120
@@ -11,7 +11,7 @@ covariance:
 constraints:
   long_only: true
   sum_to_one: true
-  max_weight: 0.35               # keputusan mandiri; diuji sensitivitas
+  max_weight: 0.35               # own decision; sensitivity-tested
   max_weight_sensitivity: [0.25, 0.50, 1.0]
   turnover_penalty: 0.0
 

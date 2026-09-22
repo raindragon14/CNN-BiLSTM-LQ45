@@ -1,4 +1,4 @@
-"""Paket model: dataset, arsitektur CNN-BiLSTM, pelatihan, walk-forward, pre-training."""
+"""Model package: dataset, CNN-BiLSTM architecture, training, walk-forward, pre-training."""
 
 from lq45.models.cnn_bilstm import CNNBiLSTM
 from lq45.models.dataset import (
@@ -16,7 +16,6 @@ from lq45.models.decoder import MAEDecoder
 from lq45.models.encoder import CNNBiLSTMEncoder
 from lq45.models.pretrain import (
     PretrainResult,
-    build_pretrain_data,
     load_pretrained_encoder,
     mask_input,
     pretrain_mae,
@@ -53,7 +52,6 @@ __all__ = [
     "PretrainSplit",
     "RawStockData",
     "build_model",
-    "build_pretrain_data",
     "build_pretrain_windows",
     "build_windows",
     "design_split",

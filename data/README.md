@@ -1,92 +1,92 @@
 # Data
 
-> **Peran:** sumber data, definisi fitur, dan keterbatasan.
-> **Audiens:** publik.
-> **Bukan untuk:** dasar keputusan (lihat `docs/keputusan_desain.md`) atau urutan
-> skrip (lihat `scripts/README.md`).
+> **Role:** data sources, feature definitions, and limitations.
+> **Audience:** public.
+> **Not for:** rationale for decisions (see `docs/keputusan_desain.md`) or the
+> script order (see `scripts/README.md`).
 
-Data penelitian tidak disertakan dalam repositori (ukuran berkas dan ketentuan sumber).
+The research data is not included in the repository (file size and source terms).
 
-## Struktur
+## Structure
 
-- `raw/`: hasil unduhan mentah, tidak diubah
-  - `prices/*.csv`: OHLCV harian per saham (kolom `Close` dan `Adj Close`)
-  - `macro/jisdor.csv`: kurs referensi resmi USD/IDR (BI)
-  - `macro/bi_7drrr.csv`: riwayat keputusan suku bunga acuan BI
-  - `metadata.json`: waktu unduh, daftar ticker, jumlah baris, ticker tanpa data
-- `interim/`: hasil pembersihan (kalender bursa, forward-fill maks. 3 hari, log-return)
-- `processed/features/`: 8 fitur + target siap model (lihat bagian Fitur dan target)
+- `raw/`: raw download output, unmodified
+  - `prices/*.csv`: daily OHLCV per stock (columns `Close` and `Adj Close`)
+  - `macro/jisdor.csv`: official USD/IDR reference exchange rate (BI)
+  - `macro/bi_7drrr.csv`: history of BI policy rate decisions
+  - `metadata.json`: download time, ticker list, row count, tickers without data
+- `interim/`: cleaning output (exchange calendar, forward-fill max. 3 days, log-returns)
+- `processed/features/`: 8 features + target ready for the model (see the Features and target section)
 
-## Sumber dan justifikasi
+## Sources and justification
 
-| Data | Sumber | Sifat | Catatan |
+| Data | Source | Nature | Notes |
 |---|---|---|---|
-| Harga saham | Yahoo Finance (`.JK`), `adjusted close` | Sekunder | Disesuaikan split dan dividen; diungkap sebagai keterbatasan |
-| Kurs USD/IDR | Bank Indonesia, JISDOR | Primer | Kurs referensi resmi; diunduh dari `bi.go.id` |
-| Suku bunga acuan | Bank Indonesia, BI-7DRRR | Primer | Tanggal publikasi keputusan, bukan tanggal efektif |
-| Tolok ukur | IHSG (`.JKSE`) | Sekunder | Untuk pembanding beli-dan-tahan |
+| Stock prices | Yahoo Finance (`.JK`), `adjusted close` | Secondary | Adjusted for splits and dividends; disclosed as a limitation |
+| USD/IDR exchange rate | Bank Indonesia, JISDOR | Primary | Official reference rate; downloaded from `bi.go.id` |
+| Policy rate | Bank Indonesia, BI-7DRRR | Primary | Date of decision publication, not effective date |
+| Benchmark | IHSG (`.JKSE`) | Secondary | For the buy-and-hold comparison |
 
-Catatan keterpertanggungjawaban:
+Accountability notes:
 
-- Dua variabel makro berasal dari **Bank Indonesia** (sumber primer), bukan
-  agregator pihak ketiga.
-- Harga saham berasal dari Yahoo Finance. Sumber ini bukan sumber primer,
-  sehingga metode penyesuaian harga (split/dividen) tidak sepenuhnya
-  transparan. Keterbatasan ini harus dinyatakan pada laporan; validasi silang
-  terhadap sumber resmi IDX disarankan sebelum hasil final dilaporkan.
-- Tanggal makro memakai **tanggal publikasi** untuk mencegah kebocoran
-  informasi ke depan.
-- Nilai JISDOR harian dipakai pada tanggal yang sama (tanpa lag tambahan).
-  JISDOR terbit pada sore hari sehingga pemakaian seketika bersifat
-  sezaman; dampaknya terbatas karena hanya satu dari delapan fitur dan
-  dicatat di sini sebagai keterbatasan.
+- The two macro variables come from **Bank Indonesia** (a primary source), not a
+  third-party aggregator.
+- Stock prices come from Yahoo Finance. This is not a primary source,
+  so the price adjustment method (splits/dividends) is not fully
+  transparent. This limitation must be stated in the report; cross-validation
+  against official IDX sources is recommended before the final results are reported.
+- Macro dates use the **publication date** to prevent look-ahead
+  information leakage.
+- Daily JISDOR values are used on the same date (no additional lag).
+  JISDOR is published in the afternoon, so using it immediately is
+  contemporaneous; the impact is limited because it is only one of eight features and
+  is noted here as a limitation.
 
-## Pool kandidat
+## Candidate pool
 
-Pool dibaca dari `configs/universe.yaml`:
+The pool is read from `configs/universe.yaml`:
 
-- **Komposisi:** 45 konstituen LQ45 yang berlaku pada periode Agustus 2019 -
-  Januari 2020.
-- **Sumber:** IDX LQ45 Company Profiles, Agustus 2019 (halaman *Contents*).
-  Dokumen arsip dapat diverifikasi pada Wayback Machine.
-- **Alasan:** komposisi ini berlaku tepat sebelum periode out-of-sample dimulai
-  (Januari 2020), sehingga tidak memakai informasi masa depan dan tidak
-  menimbulkan bias *survivorship* dari daftar akhir periode. Pool kemudian
-  dibekukan untuk seluruh periode penelitian.
-- **Ketersediaan:** 43 dari 45 ticker tersedia di Yahoo Finance. `SRIL.JK` dan
-  `WSKT.JK` tidak tersedia karena suspensi/delisting.
+- **Composition:** the 45 LQ45 constituents in effect during the period August 2019 -
+  January 2020.
+- **Source:** IDX LQ45 Company Profiles, August 2019 (*Contents* page).
+  The archived document can be verified on the Wayback Machine.
+- **Rationale:** this composition was in effect immediately before the out-of-sample period
+  began (January 2020), so it does not use future information and does not
+  introduce *survivorship* bias from the end-of-period list. The pool was then
+  frozen for the entire research period.
+- **Availability:** 43 of 45 tickers are available on Yahoo Finance. `SRIL.JK` and
+  `WSKT.JK` are unavailable due to suspension/delisting.
 
-Keterbatasan yang harus dinyatakan:
+Limitations that must be stated:
 
-- Pool dibekukan, bukan *point-in-time*. Saham yang masuk atau keluar LQ45
-  setelah Januari 2020 tidak diperlakukan secara dinamis.
-- Dua saham yang tersuspensi tidak dapat diikutsertakan karena keterbatasan
-  data harga.
+- The pool is frozen, not *point-in-time*. Stocks that entered or left LQ45
+  after January 2020 are not treated dynamically.
+- The two suspended stocks cannot be included due to limitations
+  in the price data.
 
-## Fitur dan target
+## Features and target
 
-Delapan fitur per saham. Spesifikasi: `configs/experiment.yaml`; jejak
-keputusan: `docs/keputusan_desain.md`.
+Eight features per stock. Specification: `configs/experiment.yaml`; decision
+trail: `docs/keputusan_desain.md`.
 
-| Fitur | Nilai | Sumber |
+| Feature | Value | Source |
 |---|---|---|
 | `close` | `Adj Close` level | Sebastian & Tantia (2024); Sen & Dutta (2021) |
-| `volume` | Volume harian | Sebastian & Tantia (2024); Sen & Dutta (2021) |
-| `rsi` | RSI periode 14 | Espiga-Fernandez et al. (2024) Lampiran B.3 |
-| `cci` | CCI periode 20 | Espiga-Fernandez et al. (2024) Lampiran B.4 |
-| `cmo` | CMO periode 14 | Espiga-Fernandez et al. (2024) Lampiran B.5 |
-| `mfi` | MFI periode 14 | Espiga-Fernandez et al. (2024) Lampiran B.6 |
-| `bi_7drrr` | BI-7DRRR level | Ekstensi (celah Chaweewanchon & Chaysiri 2022) |
-| `jisdor` | Log-return USD/IDR | Ekstensi (idem) |
+| `volume` | Daily volume | Sebastian & Tantia (2024); Sen & Dutta (2021) |
+| `rsi` | RSI period 14 | Espiga-Fernandez et al. (2024) Appendix B.3 |
+| `cci` | CCI period 20 | Espiga-Fernandez et al. (2024) Appendix B.4 |
+| `cmo` | CMO period 14 | Espiga-Fernandez et al. (2024) Appendix B.5 |
+| `mfi` | MFI period 14 | Espiga-Fernandez et al. (2024) Appendix B.6 |
+| `bi_7drrr` | BI-7DRRR level | Extension (gap in Chaweewanchon & Chaysiri 2022) |
+| `jisdor` | Log-return USD/IDR | Extension (ibid.) |
 
-- **Target**: log-return 5 hari ke depan.
-- **Praproses**: winsorization `[Q1 - 1,5*IQR, Q3 + 1,5*IQR]` lalu min-max,
-  diterapkan pada fitur dan target, di-*fit* **hanya pada data latih** tiap
-  jendela walk-forward (mencegah kebocoran informasi).
-- AROONOSC, Williams %R, dan STOCHF dari Espiga-Fernandez et al. (2024) tidak
-  diambil agar jumlah fitur tetap 8. Penyederhanaan ini disengaja.
+- **Target**: 5-day-ahead log-return.
+- **Preprocessing**: winsorization `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]` then min-max,
+  applied to the features and the target, *fit* **only on the training data** of each
+  walk-forward window (preventing information leakage).
+- AROONOSC, Williams %R, and STOCHF from Espiga-Fernandez et al. (2024) are not
+  included so that the number of features stays at 8. This simplification is intentional.
 
-## Biaya transaksi
+## Transaction costs
 
-- Fee beli 0,19%, fee jual 0,29%, lot 100 lembar (ketentuan sekuritas ritel).
-- Rebalancing bulanan (21 hari bursa).
+- Buy fee 0.19%, sell fee 0.29%, lot 100 shares (retail securities terms).
+- Monthly rebalancing (21 trading days).

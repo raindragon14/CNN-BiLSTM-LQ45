@@ -1,14 +1,14 @@
-# Nested walk-forward: validation out-of-sample tepat sebelum test.
-# Train awal 2 tahun (2018-2019) -> TEST mulai Jan 2020 (mencakup COVID).
+# Nested walk-forward: validation is out-of-sample immediately before the test.
+# Initial train is 2 years (2018-2019) -> TEST starts Jan 2020 (covers COVID).
 initial_train_years: 2
-validation_days: 63              # ~3 bulan, early stopping + seleksi
-test_days: 21                    # 1 bulan, evaluasi akhir
-step_days: 21                    # geser tiap bulan
+validation_days: 63              # ~3 months, early stopping + selection
+test_days: 21                    # 1 month, final evaluation
+step_days: 21                    # shift every month
 expanding: true
 
 purge:
-  horizon_days: 5                # tau: buang label train yang jatuh di validation
+  horizon_days: 5                # tau: drop training labels that fall inside validation
 embargo_days: 59                 # w-1
 
-design_period: ["2018-01-01", "2019-12-31"]   # untuk freeze arsitektur/hyperparameter
+design_period: ["2018-01-01", "2019-12-31"]   # to freeze architecture/hyperparameters
 freeze_hyperparameters: true

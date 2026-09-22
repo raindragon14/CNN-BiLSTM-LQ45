@@ -1,8 +1,8 @@
-"""Uji determinisme pelatihan; jalankan: python3 tests/test_determinism.py.
+"""Training determinism tests; run: python3 tests/test_determinism.py.
 
-Data di sini sintetis dan hanya untuk memvalidasi pipa, bukan hasil.
-Dua pelatihan dengan seed sama menghasilkan loss validasi yang sama persis;
-berkas ini mengujinya.
+The data here is synthetic and only validates the pipeline, not results.
+Two trainings with the same seed must produce exactly the same validation
+loss; this file checks that property.
 """
 
 import sys
@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from lq45.models.training import build_model, resolve_device, train_model
 
 
-def uji_determinisme() -> None:
+def test_determinism() -> None:
     rng = np.random.default_rng(0)
     x_train = rng.normal(size=(256, 8, 30)).astype(np.float32)
     y_train = rng.normal(size=(256,)).astype(np.float32)
@@ -24,7 +24,7 @@ def uji_determinisme() -> None:
     y_val = rng.normal(size=(64,)).astype(np.float32)
     device = resolve_device("cpu")
 
-    def satu_fit() -> list[float]:
+    def run_single_fit() -> list[float]:
         model = build_model(
             {
                 "n_features": 8,
@@ -36,7 +36,7 @@ def uji_determinisme() -> None:
             },
             seed=7,
         )
-        hasil = train_model(
+        result = train_model(
             model,
             (x_train, y_train),
             (x_val, y_val),
@@ -48,14 +48,14 @@ def uji_determinisme() -> None:
             seed=7,
             device=device,
         )
-        return [baris["val_loss"] for baris in hasil.history]
+        return [row["val_loss"] for row in result.history]
 
-    assert satu_fit() == satu_fit()
+    assert run_single_fit() == run_single_fit()
 
 
 def main() -> int:
-    uji_determinisme()
-    print("test_determinism.py: 1 uji lolos")
+    test_determinism()
+    print("test_determinism.py: 1 test passed")
     return 0
 
 

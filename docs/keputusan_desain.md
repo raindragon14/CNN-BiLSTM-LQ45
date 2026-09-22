@@ -1,222 +1,222 @@
-# Catatan Keputusan Desain
+# Design Decision Log
 
-> **Peran:** satu-satunya sumber jejak keputusan -> dasar (artikel + lokasi) dan
-> lokasi implementasi.
-> **Audiens:** publik.
-> **Bukan untuk:** analisis mendalam atau alternatif yang ditolak (lihat
-> `internal/First_Principles_Parameter_Analysis.md`) atau naskah skripsi
+> **Role:** the single source of the decision trail -> rationale (paper + location) and
+> implementation location.
+> **Audience:** public.
+> **Not for:** in-depth analysis or rejected alternatives (see
+> `internal/First_Principles_Parameter_Analysis.md`) or the thesis manuscript
 > (`internal/SKRIPSI.md`).
 
-Berkas ini adalah jejak setiap keputusan penelitian: apa yang diputuskan, atas
-dasar apa, dan di mana diterapkan. Tujuannya agar keputusan dapat ditelusuri
-kembali tanpa mengandalkan ingatan.
+This file is a trail of every research decision: what was decided, on what
+basis, and where it is applied. Its purpose is to make decisions traceable
+without relying on memory.
 
-## Cara membaca
+## How to read
 
-- **Dasar** menyebut artikel dan lokasi di dalam artikel (bagian, tabel, atau
-  persamaan), bukan hanya nama penulis.
-- **Implementasi** menyebut berkas dan kunci yang memuat keputusan tersebut.
-- Status: `final` (sudah diputuskan) atau `menunggu` (belum diputuskan).
+- **Rationale** names the paper and the location within the paper (section, table, or
+  equation), not just the author's name.
+- **Implementation** names the file and key that contain the decision.
+- Status: `final` (decided) or `pending` (not yet decided).
 
 ---
 
 ## Data
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Periode | 2018-01-01 s.d. 2025-12-31 | 8 tahun; mencakup COVID 2020 dan kenaikan suku bunga 2022-2024 | `configs/data.yaml` `period` | final |
-| Pool kandidat | 45 konstituen LQ45 periode Agu 2019 - Jan 2020 | IDX LQ45 Company Profiles (Agu 2019), halaman *Contents*; arsip Wayback | `configs/universe.yaml` | final |
-| Alasan pool dibekukan | Menghindari pemilihan arbitrer dan bias survivorship dari daftar akhir periode | - | `data/README.md` | final |
-| Sumber harga | Yahoo Finance `.JK`, `adjusted close` | Sumber sekunder; keterbatasan diungkap | `configs/data.yaml` `sources.price` | final |
-| Sumber kurs | JISDOR, Bank Indonesia | Kurs referensi resmi Bank Indonesia | `configs/data.yaml` `sources.fx` | final |
-| Sumber suku bunga | BI-7DRRR, Bank Indonesia | Halaman indikator resmi BI | `configs/data.yaml` `sources.macro` | final |
-| Tolok ukur | IHSG (`.JKSE`) | Pembanding beli-dan-tahan | `configs/data.yaml` `sources.benchmark` | final |
-| Biaya transaksi | beli 0,19%, jual 0,29%, lot 100 | Ketentuan sekuritas ritel Indonesia | `configs/data.yaml` `costs` | final |
-| Penanganan data kosong | forward-fill maks. 3 hari | Kalender bursa tidak sinkron | `configs/data.yaml` `cleaning` | final |
-| Bentuk split | Train awal 2 tahun, jendela *expanding* | Walk-forward standar; jendela melebar mempertahankan seluruh data historis. Prinsip, bukan sitasi | `configs/split.yaml` | final |
-| Purge & embargo | purge 5 hari (=tau), embargo 59 hari (=w-1) | Lopez de Prado (2018) Bab 7 (purged cross-validation): buang label latih yang tumpang tindih dengan validation, dan beri jeda setelah test | `configs/split.yaml` | final |
-| Panjang validation/test/step | 63 / 21 / 21 hari | Keputusan mandiri: ~1 kuartal, 1 bulan, 1 bulan; selaras hold bulanan dan tau=5 | `configs/split.yaml` | final |
-| Penyelarasan makro | Tanggal publikasi | Prinsip: mencegah kebocoran informasi ke depan | `configs/data.yaml` `macro_lag` | final |
-| Jenis return | log-return | Sen & Dutta (2021) menghitung log return; sifat aditif antar waktu | `configs/data.yaml` `cleaning.return_type` | final |
+| Period | 2018-01-01 to 2025-12-31 | 8 years; covers COVID 2020 and the 2022-2024 rate hikes | `configs/data.yaml` `period` | final |
+| Candidate pool | 45 LQ45 constituents, Aug 2019 - Jan 2020 period | IDX LQ45 Company Profiles (Aug 2019), *Contents* page; Wayback archive | `configs/universe.yaml` | final |
+| Reason the pool is frozen | To avoid arbitrary selection and survivorship bias from the end-of-period list | - | `data/README.md` | final |
+| Price source | Yahoo Finance `.JK`, `adjusted close` | Secondary source; limitation disclosed | `configs/data.yaml` `sources.price` | final |
+| Exchange-rate source | JISDOR, Bank Indonesia | Official Bank Indonesia reference rate | `configs/data.yaml` `sources.fx` | final |
+| Interest-rate source | BI-7DRRR, Bank Indonesia | Official BI indicator page | `configs/data.yaml` `sources.macro` | final |
+| Benchmark | IHSG (`.JKSE`) | Buy-and-hold comparison | `configs/data.yaml` `sources.benchmark` | final |
+| Transaction costs | buy 0.19%, sell 0.29%, lot 100 | Indonesian retail securities terms | `configs/data.yaml` `costs` | final |
+| Missing-data handling | forward-fill max. 3 days | Exchange calendars are not synchronized | `configs/data.yaml` `cleaning` | final |
+| Split shape | Initial training 2 years, *expanding* window | Standard walk-forward; an expanding window retains all historical data. Principle, not a citation | `configs/split.yaml` | final |
+| Purge & embargo | purge 5 days (=tau), embargo 59 days (=w-1) | Lopez de Prado (2018) Chapter 7 (purged cross-validation): drop training labels that overlap with validation, and leave a gap after the test | `configs/split.yaml` | final |
+| Validation/test/step length | 63 / 21 / 21 days | Independent decision: ~1 quarter, 1 month, 1 month; consistent with monthly holding and tau=5 | `configs/split.yaml` | final |
+| Macro alignment | Publication date | Principle: prevent look-ahead information leakage | `configs/data.yaml` `macro_lag` | final |
+| Return type | log-return | Sen & Dutta (2021) compute log returns; additive property over time | `configs/data.yaml` `cleaning.return_type` | final |
 
-## Fitur
+## Features
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Representasi harga | Level `Adj Close` (bukan log-return) | Chaweewanchon & Chaysiri (2022) Bagian 4.1.1 (harga penutupan); Sebastian & Tantia (2024) Bagian data (6 fitur level) | `configs/experiment.yaml` | final |
-| Fitur dasar | `close`, `volume` | Sebastian & Tantia (2024) Bagian data (OHLC + adjusted close + volume); Sen & Dutta (2021) Bagian data (6 fitur) | `configs/experiment.yaml` | final |
-| RSI | periode 14 | Espiga-Fernandez et al. (2024) Lampiran B.3 | `configs/experiment.yaml` | final |
-| CCI | periode 20 | Espiga-Fernandez et al. (2024) Lampiran B.4 | `configs/experiment.yaml` | final |
-| CMO | periode 14 | Espiga-Fernandez et al. (2024) Lampiran B.5 | `configs/experiment.yaml` | final |
-| MFI | periode 14 (butuh harga + volume) | Espiga-Fernandez et al. (2024) Lampiran B.6 | `configs/experiment.yaml` | final |
-| Penyederhanaan | AROONOSC, Williams %R, STOCHF dari Espiga-Fernandez et al. tidak diambil | Dikurangi sadar agar jumlah fitur tetap 8 | `configs/experiment.yaml` | final |
-| Makro: BI-7DRRR | level (%) | Ekstensi; selisih bulanan hampir selalu nol sehingga tidak informatif | `configs/experiment.yaml` | final |
-| Makro: JISDOR | log-return harian | Tidak ada artikel yang memakai makro sebagai fitur; level JISDOR non-stasioner, sehingga dipakai log-return agar stasioner | `configs/experiment.yaml` | final |
-| Jumlah fitur | 8 | Rentang literatur 6 fitur (Sebastian & Tantia 2024; Sen & Dutta 2021) sampai 11 fitur (Espiga-Fernandez et al. 2024) | `configs/experiment.yaml` | final |
-| Penyesuaian harga | Kolom OHLC diskalakan dengan faktor `Adj Close / Close` | Mencegah lompatan akibat dividen dan pemecahan saham; Sen & Dutta (2021) memakai `adjusted_close` | `src/lq45/features/build.py` | final |
-| Kalender dan data kosong | Kalender bursa dari IHSG; forward-fill maks. 3 hari | `configs/data.yaml` `cleaning` | `src/lq45/features/build.py` | final |
+| Price representation | `Adj Close` level (not log-return) | Chaweewanchon & Chaysiri (2022) Section 4.1.1 (closing prices); Sebastian & Tantia (2024) data section (6 level features) | `configs/experiment.yaml` | final |
+| Base features | `close`, `volume` | Sebastian & Tantia (2024) data section (OHLC + adjusted close + volume); Sen & Dutta (2021) data section (6 features) | `configs/experiment.yaml` | final |
+| RSI | period 14 | Espiga-Fernandez et al. (2024) Appendix B.3 | `configs/experiment.yaml` | final |
+| CCI | period 20 | Espiga-Fernandez et al. (2024) Appendix B.4 | `configs/experiment.yaml` | final |
+| CMO | period 14 | Espiga-Fernandez et al. (2024) Appendix B.5 | `configs/experiment.yaml` | final |
+| MFI | period 14 (requires price + volume) | Espiga-Fernandez et al. (2024) Appendix B.6 | `configs/experiment.yaml` | final |
+| Simplification | AROONOSC, Williams %R, STOCHF from Espiga-Fernandez et al. are not included | Deliberately reduced so that the number of features stays at 8 | `configs/experiment.yaml` | final |
+| Macro: BI-7DRRR | level (%) | Extension; the monthly difference is almost always zero, so it is not informative | `configs/experiment.yaml` | final |
+| Macro: JISDOR | daily log-return | No paper uses the macro series as a feature; the JISDOR level is non-stationary, so the log-return is used to make it stationary | `configs/experiment.yaml` | final |
+| Number of features | 8 | Literature range from 6 features (Sebastian & Tantia 2024; Sen & Dutta 2021) to 11 features (Espiga-Fernandez et al. 2024) | `configs/experiment.yaml` | final |
+| Price adjustment | OHLC columns scaled by the `Adj Close / Close` factor | Prevents jumps caused by dividends and stock splits; Sen & Dutta (2021) use `adjusted_close` | `src/lq45/features/build.py` | final |
+| Calendar and missing data | Exchange calendar from IHSG; forward-fill max. 3 days | `configs/data.yaml` `cleaning` | `src/lq45/features/build.py` | final |
 
-## Praproses
+## Preprocessing
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Transformasi robust | Winsorization ambang `[Q1 - 1,5*IQR, Q3 + 1,5*IQR]` | Sebastian & Tantia (2024) Bagian data pre-processing (outlier via boxplot, dicapit) | `configs/experiment.yaml` | final |
-| Skala | Min-max scaler | Sebastian & Tantia (2024) Bagian data pre-processing | `configs/experiment.yaml` | final |
-| Cakupan transformasi | Fitur **dan** target | Sebastian & Tantia (2024) memperlakukan outlier pada keseluruhan data sebelum pemodelan | `configs/experiment.yaml` | final |
-| Titik *fit* | Hanya data latih tiap jendela walk-forward | **Prinsip**, bukan sitasi: pencegahan kebocoran informasi ke depan | `src/lq45/features/preprocess.py` | final |
-| Alternatif yang ditolak | Huber location (Chaweewanchon & Chaysiri 2022 Bagian 3.5.2, `k=1,435`) | Artikel tidak menjelaskan standardisasi sebelum Huber, sehingga `k=1,435` pada harga mentah praktis menjadi median; sulit direplikasi persis | `docs/keputusan_desain.md` | final |
+| Robust transformation | Winsorization thresholds `[Q1 - 1.5*IQR, Q3 + 1.5*IQR]` | Sebastian & Tantia (2024) data pre-processing section (outliers via boxplot, capped) | `configs/experiment.yaml` | final |
+| Scale | Min-max scaler | Sebastian & Tantia (2024) data pre-processing section | `configs/experiment.yaml` | final |
+| Transformation scope | Features **and** target | Sebastian & Tantia (2024) handle outliers across the entire dataset before modeling | `configs/experiment.yaml` | final |
+| *Fit* point | Only the training data of each walk-forward window | **Principle**, not a citation: preventing look-ahead information leakage | `src/lq45/features/preprocess.py` | final |
+| Rejected alternative | Huber location (Chaweewanchon & Chaysiri 2022 Section 3.5.2, `k=1.435`) | The paper does not explain standardization before Huber, so `k=1.435` on raw prices effectively becomes the median; hard to replicate exactly | `docs/keputusan_desain.md` | final |
 
-## Target dan Pelatihan
+## Target and Training
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Target | Log-return 5 hari ke depan | Selaras horizon `tau=5` dan hold bulanan | `configs/model.yaml` | final |
-| Fungsi loss | MSE | Chaweewanchon & Chaysiri (2022) Bagian pemilihan hyperparameter ("Mean Squared Error (MSE) was used as the loss function"); Kim et al. (2025) ("standard loss function (e.g., mean squared error)") | `configs/model.yaml` | final |
-| Alternatif loss yang ditolak | Huber loss | Tidak dipakai artikel mana pun di folder; kebutuhan kokoh sudah ditangani winsorization (Sebastian & Tantia 2024); MV menuntut estimasi rata-rata, bukan median | `docs/keputusan_desain.md` | final |
-| Jendela lihat-balik | `w=60` | Keputusan mandiri (praktik umum, kompromi bias-varians); diuji pada sensitivitas jendela | `configs/model.yaml` | final |
-| Horizon prediksi | `tau=5` | Keputusan mandiri (selaras hold bulanan); diuji pada sensitivitas jendela | `configs/model.yaml` | final |
-| Jendela estimasi kovarians | `L=120` | Tidak ada artikel yang menetapkannya; diuji sensitivitas pada tahap portofolio (L diuji pada 60, 120, 252) | `configs/portfolio.yaml` | final |
-| Seed averaging | 0, 1, 2, 3, 4 | Redam variansi pelatihan (keputusan mandiri) | `configs/model.yaml` | final |
-| Learning rate | 0,0001 | Chaweewanchon & Chaysiri (2022) Bagian 4.1.3; artikel itu juga mengutip Hastie et al. (2017) bahwa lr < 0,01 | `configs/model.yaml` | final |
-| Optimizer | Adam | Chaweewanchon & Chaysiri (2022) Bagian 4.1.3; Sebastian & Tantia (2024) | `configs/model.yaml` | final |
-| Jumlah epoch | 100 | Chaweewanchon & Chaysiri (2022) Bagian 4.1.3 (pelatihan berhenti pada 100-120 epoch); Sebastian & Tantia (2024) | `configs/model.yaml` | final |
-| Early stopping | patience 8 | Sebastian & Tantia (2024) (berhenti setelah 8 epoch tanpa perbaikan) | `configs/model.yaml` | final |
-| Dropout | 0,2 seragam (CNN, LSTM, Dense) | Sebastian & Tantia (2024) (dropout 0,2); angka 0,3 sebelumnya tidak berdasar | `configs/model.yaml` | final |
-| Fungsi aktivasi | ReLU | Espiga-Fernandez et al. (2024) Tabel 3 (ReLU pada kedua lapis konvolusi dan lapis Linear) | `configs/model.yaml` | final |
-| Filter CNN | Dua lapis 32 -> 64 | Espiga-Fernandez et al. (2024) Tabel 3 memakai pola persis ini | `configs/model.yaml` | final |
-| Kernel CNN | 3 | Chaweewanchon & Chaysiri (2022) 3x3 | `configs/model.yaml` | final |
-| Unit BiLSTM | 64 | Tidak ada artikel yang menetapkannya; disetel pada periode desain. Grid sengaja mencakup nilai Chaweewanchon & Chaysiri (2022) = 128 dan Sebastian & Tantia (2024) = 32 | `configs/model.yaml` | final |
-| Lapis BiLSTM | 2 | Graves, Mohamed & Hinton (2013) memperkenalkan RNN berlapis; Chaweewanchon & Chaysiri (2022) dan Sebastian & Tantia (2024) memakai dua lapis | `configs/model.yaml` | final |
-| Peluruhan bobot | 0 | Tidak ada artikel yang menetapkannya; disetel pada periode desain (0 dibanding 0,0001) | `configs/model.yaml` | final |
-| Pooling | MaxPool 2 | Artikel menyebut pooling tanpa angka seragam; disetel pada periode desain (2 dibanding 3) | `configs/model.yaml` | final |
-| BatchNorm | Ya | Chaweewanchon & Chaysiri (2022) memakai BatchNorm | `configs/model.yaml` | final |
-| Perangkat | `auto` (CUDA bila tersedia, jika tidak CPU) | Jalur resmi CPU menjaga klaim hemat sumber daya dan reproducibility; GPU hanya eksperimen tambahan | `configs/model.yaml` | final |
-| Batch size | 32 | Tidak ada artikel yang menetapkannya; disetel pada periode desain (32 dibanding 64). Huang et al. (2024) memakai jumlah saham sebagai batch | `configs/model.yaml` | final |
-| Cakupan model | Satu model bersama semua saham | Espiga-Fernandez et al. (2024) masukan `lookback x instrumen x fitur`; Huang et al. (2024) masukan `32 x 15`; sekaligus membuat pelatihan layak di CPU | `configs/model.yaml` | final |
-| Prosedur item lemah | Setel unit BiLSTM, peluruhan bobot, pooling, dan batch size pada periode desain (latih 2018, validasi 2019), lalu bekukan; laporkan grid 24 kombinasi sebagai lampiran | Mengubah asumsi menjadi prosedur pemilihan yang dapat diaudit; mencegah kebocoran karena tidak menyentuh data OOS. Grid unit sengaja mencakup nilai artikel (32 = Sebastian & Tantia 2024, 128 = Chaweewanchon & Chaysiri 2022) | `configs/model.yaml` | final |
-| Sensitivitas jendela | `w` {30, 60, 120} dan `tau` {1, 5, 21} disetel pada periode desain | Menjadikan `w` dan `tau` hasil uji, bukan asumsi; hasil dilaporkan sebagai lampiran | `configs/model.yaml` `sensitivity` | final |
-| Alternatif arsitektur yang ditolak | Model hibrida berbasis attention (CNN-BiLSTM-Attention/ECA, BiLSTM-Transformer) | Menjadi arah literatur 2024-2025, tetapi memerlukan data lebih banyak daripada 43 saham x 8 tahun; lingkup penelitian adalah replikasi CNN-BiLSTM (Chaweewanchon & Chaysiri 2022). Dicatat sebagai pengembangan berikutnya | `internal/SKRIPSI.md` Bagian 4.9 | final |
+| Target | 5-day-ahead log-return | Consistent with the horizon `tau=5` and monthly holding | `configs/model.yaml` | final |
+| Loss function | MSE | Chaweewanchon & Chaysiri (2022) hyperparameter selection section ("Mean Squared Error (MSE) was used as the loss function"); Kim et al. (2025) ("standard loss function (e.g., mean squared error)") | `configs/model.yaml` | final |
+| Rejected loss alternative | Huber loss | Not used by any paper in the folder; the robustness requirement is already handled by winsorization (Sebastian & Tantia 2024); MV requires a mean estimate, not a median | `docs/keputusan_desain.md` | final |
+| Look-back window | `w=60` | Independent decision (common practice, bias-variance trade-off); tested in the window sensitivity analysis | `configs/model.yaml` | final |
+| Prediction horizon | `tau=5` | Independent decision (consistent with monthly holding); tested in the window sensitivity analysis | `configs/model.yaml` | final |
+| Covariance estimation window | `L=120` | No paper sets it; sensitivity tested at the portfolio stage (L tested at 60, 120, 252) | `configs/portfolio.yaml` | final |
+| Seed averaging | 0, 1, 2, 3, 4 | Dampens training variance (independent decision) | `configs/model.yaml` | final |
+| Learning rate | 0.0001 | Chaweewanchon & Chaysiri (2022) Section 4.1.3; that paper also cites Hastie et al. (2017) that lr < 0.01 | `configs/model.yaml` | final |
+| Optimizer | Adam | Chaweewanchon & Chaysiri (2022) Section 4.1.3; Sebastian & Tantia (2024) | `configs/model.yaml` | final |
+| Number of epochs | 100 | Chaweewanchon & Chaysiri (2022) Section 4.1.3 (training stopped at 100-120 epochs); Sebastian & Tantia (2024) | `configs/model.yaml` | final |
+| Early stopping | patience 8 | Sebastian & Tantia (2024) (stop after 8 epochs without improvement) | `configs/model.yaml` | final |
+| Dropout | uniform 0.2 (CNN, LSTM, Dense) | Sebastian & Tantia (2024) (dropout 0.2); the previous figure of 0.3 was unfounded | `configs/model.yaml` | final |
+| Activation function | ReLU | Espiga-Fernandez et al. (2024) Table 3 (ReLU on both convolution layers and the Linear layer) | `configs/model.yaml` | final |
+| CNN filters | Two layers 32 -> 64 | Espiga-Fernandez et al. (2024) Table 3 uses exactly this pattern | `configs/model.yaml` | final |
+| CNN kernel | 3 | Chaweewanchon & Chaysiri (2022) 3x3 | `configs/model.yaml` | final |
+| BiLSTM units | 64 | No paper sets it; tuned on the design period. The grid deliberately covers the values of Chaweewanchon & Chaysiri (2022) = 128 and Sebastian & Tantia (2024) = 32 | `configs/model.yaml` | final |
+| BiLSTM layers | 2 | Graves, Mohamed & Hinton (2013) introduced stacked RNNs; Chaweewanchon & Chaysiri (2022) and Sebastian & Tantia (2024) use two layers | `configs/model.yaml` | final |
+| Weight decay | 0 | No paper sets it; tuned on the design period (0 vs 0.0001) | `configs/model.yaml` | final |
+| Pooling | MaxPool 2 | Papers mention pooling without a uniform value; tuned on the design period (2 vs 3) | `configs/model.yaml` | final |
+| BatchNorm | Yes | Chaweewanchon & Chaysiri (2022) use BatchNorm | `configs/model.yaml` | final |
+| Device | `auto` (CUDA if available, otherwise CPU) | The official CPU path preserves the resource-efficiency and reproducibility claims; GPU is only an additional experiment | `configs/model.yaml` | final |
+| Batch size | 32 | No paper sets it; tuned on the design period (32 vs 64). Huang et al. (2024) use the number of stocks as the batch | `configs/model.yaml` | final |
+| Model scope | A single model shared across all stocks | Espiga-Fernandez et al. (2024) input `lookback x instruments x features`; Huang et al. (2024) input `32 x 15`; this also makes training feasible on CPU | `configs/model.yaml` | final |
+| Weak-item procedure | Tune the BiLSTM units, weight decay, pooling, and batch size on the design period (train 2018, validate 2019), then freeze; report the 24-combination grid as an appendix | Turns assumptions into an auditable selection procedure; prevents leakage because it does not touch the OOS data. The unit grid deliberately covers the paper values (32 = Sebastian & Tantia 2024, 128 = Chaweewanchon & Chaysiri 2022) | `configs/model.yaml` | final |
+| Window sensitivity | `w` {30, 60, 120} and `tau` {1, 5, 21} tuned on the design period | Makes `w` and `tau` test results rather than assumptions; results reported as an appendix | `configs/model.yaml` `sensitivity` | final |
+| Rejected architecture alternatives | Attention-based hybrid models (CNN-BiLSTM-Attention/ECA, BiLSTM-Transformer) | They are the 2024-2025 literature direction, but require more data than 43 stocks x 8 years; the scope of this research is a replication of CNN-BiLSTM (Chaweewanchon & Chaysiri 2022). Noted as future work | `internal/SKRIPSI.md` Section 4.9 | final |
 
-## Portofolio dan Evaluasi
+## Portfolio and Evaluation
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Ukuran portofolio akhir | `k` = 5, 7, 10 | Pertanyaan penelitian RQ2 | `configs/portfolio.yaml` | final |
-| Batas bobot | `max_weight` = 35% | Tidak ada artikel yang menetapkannya; diuji sensitivitas pada tahap portofolio (25%, 35%, 50%, 100%) | `configs/portfolio.yaml` | final |
-| Estimator kovarians | sample, ridge, Ledoit-Wolf, GMV (perbandingan, bukan asumsi) | DeMiguel et al. (2009); Ledoit & Wolf (2004) | `configs/portfolio.yaml` | final |
-| Rebalancing | bulanan (21 hari) | Espiga-Fernandez et al. (2024) (rebalancing periodik lebih hemat biaya); Huang et al. (2024) | `configs/portfolio.yaml` | final |
-| Metrik | Sharpe, Sortino, Calmar, MDD, turnover, DSR, PBO | Bailey & Lopez de Prado (2014); Bailey et al. (2016) | `configs/experiment.yaml` | final |
-| Uji signifikansi | Ledoit-Wolf HAC untuk Sharpe; Romano-Wolf untuk multiple testing | Ledoit & Wolf (2008) mengokohkan uji Jobson & Korkie (1981) terhadap non-normalitas dan dependensi deret waktu; Romano & Wolf (2005) untuk data snooping | `configs/experiment.yaml` | final |
-| Rezim | COVID 2020; pemulihan/kenaikan suku bunga 2021-2025 (keduanya OOS) | Huang et al. (2024) (uji tahan COVID) | `configs/experiment.yaml` | final |
-| Tingkat bebas risiko | BI-7DRRR harian (= tahunan / 252) | Bank Indonesia (sumber resmi); konversi sederhana oleh 252 hari | `configs/experiment.yaml` `evaluation.risk_free` | final |
-| Faktor annualisasi | 252 | Konvensi standar. IDX empiris ~242 hari/tahun; diuji sebagai sensitivitas | `configs/experiment.yaml` `evaluation.annualization` | final |
-| Kendala MV | long-only, jumlah bobot = 1 | Markowitz (1952); perdagangan ritel IDX tidak memperbolehkan short | `configs/portfolio.yaml` `constraints` | final |
-| Regularisasi kovarians | ridge `epsilon` = 1e-4 | Ledoit & Wolf (2004) penyusutan untuk kovarians berdimensi besar; ridge menstabilkan diagonal | `configs/portfolio.yaml` `ridge_epsilon` | final |
-| Penalti turnover | 0 | Biaya transaksi disimulasikan eksplisit (beli 0,19%, jual 0,29%, lot 100), bukan lewat penalti | `configs/portfolio.yaml` `turnover_penalty` | final |
-| Model pembanding | MV klasik, Ridge, Random Forest, Gradient Boosting, CNN-BiLSTM; baseline 1/N dan IHSG | Chaweewanchon & Chaysiri (2022) membandingkan LSTM/BiLSTM/CNN-BiLSTM/MV; DeMiguel et al. (2009) untuk 1/N; Anuno & Madaleno (2024) untuk MVO klasik | `configs/experiment.yaml` `ablation` | final |
-| Grid `k` | 5, 7, 10 (RQ2) | Chaweewanchon & Chaysiri (2022) menguji N = 5-10; Paiva et al. (2019) = 7; Wang et al. (2020) = 10 | `configs/portfolio.yaml` `k_values` | final |
-| Uji Sharpe | Ledoit-Wolf HAC | Ledoit & Wolf (2008) | `configs/experiment.yaml` `significance.sharpe_test` | final |
-| Multiple testing | Romano-Wolf stepdown | Romano & Wolf (2005); Bailey et al. (2016) untuk risiko backtest overfitting | `configs/experiment.yaml` `significance.multiple_testing` | final |
-| Sensitivitas angka mandiri | `w` {30,60,120}, `tau` {1,5,21}, `L` {60,120,252}, `maxw` {25,35,50,100}%, `k` {3,15,20} | Mengubah angka tanpa artikel menjadi hasil uji; dilaporkan sebagai lampiran | `configs/model.yaml` `sensitivity`; `configs/portfolio.yaml` | final |
-| Alternatif validasi yang ditolak | Combinatorial Purged Cross-Validation (CPCV) | Menjadi praktik baku 2024-2025, tetapi keluarga metodenya sudah diwakili PBO/CSCV (Bailey et al. 2016); walk-forward bersarang dengan purge/embargo (Lopez de Prado 2018) sudah dipakai | `internal/SKRIPSI.md` Bagian 4.9 | final |
-| Formulasi Mean-Variance | Target-return constrained: min w'Σw s.t. w'μ=γ, Σw=1, 0≤w≤maxw | **Chaweewanchon & Chaysiri (2022) Section 3.1 Persamaan (1)-(4)** — formulasi eksplisit MV dengan expected return dari prediksi ML; Wang et al. (2020) LSTM+MV pakai prediksi sebagai expected return | `src/lq45/portfolio/optimize.py` `bobot_mean_varians_target_return` | final |
-| Expected return (μ) untuk MV | Rata-rata `pred_ens` ensemble (5 seed) dari top-k saham terpilih | Chaweewanchon & Chaysiri (2022) "predicted results are integrated into the MV model"; Wang et al. (2020) LSTM+MV pakai prediksi sebagai expected return | `src/lq45/portfolio/backtest.py` `_target_return_dari_prediksi` | final |
-| Target return (γ) | Mean pred_ens dari k saham terpilih pada tanggal rebalancing | Natural choice, no extra hyperparameter; konsisten dengan Ei pada persamaan Chaweewanchon & Chaysiri (2022) | `configs/portfolio.yaml` `optimization.target_return_method` | final |
-| Grid optimizer type | `target_return` (MV) saja; GMV dihapus dari grid | Huang et al. (2024) Table 1 Panel B membandingkan AGC-CNN+GMV vs AGC-CNN+MaxSR vs AGC-CNN+1/N; dipilih MV karena menggunakan prediksi ML sebagai expected return | `configs/portfolio.yaml` `optimization.types` | final |
-| Risk aversion λ | Tidak dipakai (formulasi target-return) | Formulasi Chaweewanchon & Chaysiri (2022) Eq 1-4 tidak menggunakan λ | - | final |
-| Optimizer type dalam run_info | Kolom tambahan di output untuk audit | Traceability keputusan desain | `scripts/04_optimize.py` `run_info.json` | final |
+| Final portfolio size | `k` = 5, 7, 10 | Research question RQ2 | `configs/portfolio.yaml` | final |
+| Weight cap | `max_weight` = 35% | No paper sets it; sensitivity tested at the portfolio stage (25%, 35%, 50%, 100%) | `configs/portfolio.yaml` | final |
+| Covariance estimators | sample, ridge, Ledoit-Wolf, GMV (comparison, not assumption) | DeMiguel et al. (2009); Ledoit & Wolf (2004) | `configs/portfolio.yaml` | final |
+| Rebalancing | monthly (21 days) | Espiga-Fernandez et al. (2024) (periodic rebalancing is more cost-efficient); Huang et al. (2024) | `configs/portfolio.yaml` | final |
+| Metrics | Sharpe, Sortino, Calmar, MDD, turnover, DSR, PBO | Bailey & Lopez de Prado (2014); Bailey et al. (2016) | `configs/experiment.yaml` | final |
+| Significance tests | Ledoit-Wolf HAC for Sharpe; Romano-Wolf for multiple testing | Ledoit & Wolf (2008) robustify the Jobson & Korkie (1981) test against non-normality and time-series dependence; Romano & Wolf (2005) for data snooping | `configs/experiment.yaml` | final |
+| Regimes | COVID 2020; recovery/rate hikes 2021-2025 (both OOS) | Huang et al. (2024) (COVID robustness test) | `configs/experiment.yaml` | final |
+| Risk-free rate | daily BI-7DRRR (= annual / 252) | Bank Indonesia (official source); simple conversion by 252 days | `configs/experiment.yaml` `evaluation.risk_free` | final |
+| Annualization factor | 252 | Standard convention. IDX empirically ~242 days/year; tested as a sensitivity | `configs/experiment.yaml` `evaluation.annualization` | final |
+| MV constraints | long-only, weights sum = 1 | Markowitz (1952); IDX retail trading does not allow shorting | `configs/portfolio.yaml` `constraints` | final |
+| Covariance regularization | ridge `epsilon` = 1e-4 | Ledoit & Wolf (2004) shrinkage for large-dimensional covariance; ridge stabilizes the diagonal | `configs/portfolio.yaml` `ridge_epsilon` | final |
+| Turnover penalty | 0 | Transaction costs are simulated explicitly (buy 0.19%, sell 0.29%, lot 100), not through a penalty | `configs/portfolio.yaml` `turnover_penalty` | final |
+| Comparison models | classical MV, Ridge, Random Forest, Gradient Boosting, CNN-BiLSTM; 1/N and IHSG baselines | Chaweewanchon & Chaysiri (2022) compare LSTM/BiLSTM/CNN-BiLSTM/MV; DeMiguel et al. (2009) for 1/N; Anuno & Madaleno (2024) for classical MVO | `configs/experiment.yaml` `ablation` | final |
+| `k` grid | 5, 7, 10 (RQ2) | Chaweewanchon & Chaysiri (2022) test N = 5-10; Paiva et al. (2019) = 7; Wang et al. (2020) = 10 | `configs/portfolio.yaml` `k_values` | final |
+| Sharpe test | Ledoit-Wolf HAC | Ledoit & Wolf (2008) | `configs/experiment.yaml` `significance.sharpe_test` | final |
+| Multiple testing | Romano-Wolf stepdown | Romano & Wolf (2005); Bailey et al. (2016) for backtest overfitting risk | `configs/experiment.yaml` `significance.multiple_testing` | final |
+| Sensitivity of independent figures | `w` {30,60,120}, `tau` {1,5,21}, `L` {60,120,252}, `maxw` {25,35,50,100}%, `k` {3,15,20} | Turns figures without a paper source into test results; reported as an appendix | `configs/model.yaml` `sensitivity`; `configs/portfolio.yaml` | final |
+| Rejected validation alternative | Combinatorial Purged Cross-Validation (CPCV) | It is the 2024-2025 standard practice, but its method family is already represented by PBO/CSCV (Bailey et al. 2016); nested walk-forward with purge/embargo (Lopez de Prado 2018) is already used | `internal/SKRIPSI.md` Section 4.9 | final |
+| Mean-Variance formulation | Target-return constrained: min w'Σw s.t. w'μ=γ, Σw=1, 0≤w≤maxw | **Chaweewanchon & Chaysiri (2022) Section 3.1 Equations (1)-(4)** — an explicit MV formulation with expected returns from ML predictions; Wang et al. (2020) LSTM+MV use predictions as expected returns | `src/lq45/portfolio/optimize.py` `mean_variance_target_return_weights` | final |
+| Expected return (μ) for MV | Ensemble mean of `pred_ens` (5 seeds) from the selected top-k stocks | Chaweewanchon & Chaysiri (2022) "predicted results are integrated into the MV model"; Wang et al. (2020) LSTM+MV use predictions as expected returns | `src/lq45/portfolio/backtest.py` `_target_return_from_predictions` | final |
+| Target return (γ) | Mean pred_ens of the k selected stocks on the rebalancing date | Natural choice, no extra hyperparameter; consistent with Ei in the Chaweewanchon & Chaysiri (2022) equation | `configs/portfolio.yaml` `optimization.target_return_method` | final |
+| Optimizer type grid | `target_return` (MV) only; GMV removed from the grid | Huang et al. (2024) Table 1 Panel B compares AGC-CNN+GMV vs AGC-CNN+MaxSR vs AGC-CNN+1/N; MV was chosen because it uses ML predictions as expected returns | `configs/portfolio.yaml` `optimization.types` | final |
+| Risk aversion λ | Not used (target-return formulation) | The Chaweewanchon & Chaysiri (2022) Eq 1-4 formulation does not use λ | - | final |
+| Optimizer type in run_info | Additional column in the output for auditing | Design-decision traceability | `scripts/04_optimize.py` `run_info.json` | final |
 
 ---
 
-## Implementasi Tahap 3
+## Stage 3 Implementation
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| **Pre-training Self-Supervised (BARU)** | Masked Autoencoder (MAE) pada 7 channel (OHLCV + BI-7DRRR + JISDOR), mask_ratio=0.3, reconstruct OHLCV only | Kang (2025): LSTM on raw OHLCV ≥ technical indicators untuk prediksi harga; PatchTST (Nie et al. 2022), TimeMAE (Cheng et al. 2023), MTSMAE (Tang & Zhang 2022): MAE pre-train pada time series meningkatkan downstream forecasting | `configs/model.yaml` `pretrain`; `src/lq45/models/pretrain.py`; `scripts/03_train_predict.py` mode `pretrain` | final |
-| **Fine-tune dengan Discriminative LR (BARU)** | Head LR=1e-4, Encoder LR=1e-5 (10x lebih kecil), freeze_encoder=false (full unfreeze) | Transfer learning standard practice; pre-trained encoder sudah belajar representasi universal, hanya head butuh adaptasi cepat | `configs/model.yaml` `pretrain.fine_tune`; `src/lq45/models/training.py` `fine_tune_model`; `scripts/03_train_predict.py` mode `walk-forward-pretrain` | final |
-| **Input Pre-train** | 7 channel: Open, High, Low, Close, Volume, BI-7DRRR, JISDOR (tanpa indikator teknikal) | Kang (2025): LSTM on raw OHLCV alone matches XGBoost with 20+ technical indicators; indikator teknikal = deterministic transform of OHLCV → redundant untuk DL | `configs/model.yaml` `pretrain.input_channels=7`; `src/lq45/models/dataset.py` `PRETRAIN_CHANNELS` | final |
-| **Pre-train Target** | Rekonstruksi OHLCV (5 channel) saja; makro sebagai conditioning | Makro (BI-7DRRR, JISDOR) slow-moving, exogenous; pola harga (candles, gaps, volume spikes) lebih kaya informasi untuk reconstruct | `src/lq45/models/decoder.py` `n_channels=5`; `src/lq45/models/pretrain.py` `mae_loss` pada channel :5 | final |
-| **Pre-train Split** | Train 90% / Val 10% per saham (tanpa purge/embargo karena tidak ada label) | Pre-training unlabeled → tidak ada leakage; split per saham menghormati kalender independen | `src/lq45/models/walkforward.py` `make_pretrain_split`; `scripts/03_train_predict.py` `run_pretrain` | final |
+| **Self-Supervised Pre-training (NEW)** | Masked Autoencoder (MAE) on 7 channels (OHLCV + BI-7DRRR + JISDOR), mask_ratio=0.3, reconstruct OHLCV only | Kang (2025): LSTM on raw OHLCV ≥ technical indicators for price prediction; PatchTST (Nie et al. 2022), TimeMAE (Cheng et al. 2023), MTSMAE (Tang & Zhang 2022): MAE pre-training on time series improves downstream forecasting | `configs/model.yaml` `pretrain`; `src/lq45/models/pretrain.py`; `scripts/03_train_predict.py` `pretrain` mode | final |
+| **Fine-tuning with Discriminative LR (NEW)** | Head LR=1e-4, Encoder LR=1e-5 (10x smaller), freeze_encoder=false (full unfreeze) | Standard transfer-learning practice; the pre-trained encoder has already learned universal representations, so only the head needs fast adaptation | `configs/model.yaml` `pretrain.fine_tune`; `src/lq45/models/training.py` `fine_tune_model`; `scripts/03_train_predict.py` `walk-forward-pretrain` mode | final |
+| **Pre-train Input** | 7 channels: Open, High, Low, Close, Volume, BI-7DRRR, JISDOR (without technical indicators) | Kang (2025): LSTM on raw OHLCV alone matches XGBoost with 20+ technical indicators; technical indicators = deterministic transform of OHLCV → redundant for DL | `configs/model.yaml` `pretrain.input_channels=7`; `src/lq45/models/dataset.py` `PRETRAIN_CHANNELS` | final |
+| **Pre-train Target** | Reconstruct OHLCV (5 channels) only; macro as conditioning | Macro (BI-7DRRR, JISDOR) is slow-moving and exogenous; price patterns (candles, gaps, volume spikes) are more informative to reconstruct | `src/lq45/models/decoder.py` `n_channels=5`; `src/lq45/models/pretrain.py` `mae_loss` on channels :5 | final |
+| **Pre-train Split** | Train 90% / Val 10% per stock (no purge/embargo because there are no labels) | Pre-training is unlabeled → no leakage; a per-stock split respects independent calendars | `src/lq45/models/walkforward.py` `make_pretrain_split`; `scripts/03_train_predict.py` `run_pretrain` | final |
 
-## Implementasi Tahap 3
+## Stage 3 Implementation (continued)
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Pilihan CNN yang tidak ditetapkan artikel | Padding `same`, urutan Conv -> BatchNorm -> ReLU, inisialisasi bawaan PyTorch | Artikel tidak mematok detail ini; dicatat eksplisit agar dapat diaudit | `src/lq45/models/cnn_bilstm.py` | final |
-| Titik fit praproses | Fit pada baris tanggal latih seluruh saham digabung (bukan pada elemen jendela); transformasi bekerja per elemen sehingga hasilnya identik | Konsisten dengan prinsip titik fit praproses (hanya data latih) dan model bersama seluruh saham | `scripts/03_train_predict.py` `skala_panel` | final |
-| Pemeriksaan silang target | Target dihitung ulang dari `close`; saat tau=5 dicocokkan dengan kolom `target` CSV (`allclose`) | Mencegah pergeseran pipa tahap 2 yang tidak terdeteksi | `src/lq45/models/dataset.py` `load_panel` | final |
-| Purge dan embargo mengikuti w/tau terpilih | Purge = tau, embargo = w-1 (bukan nilai baku 5/59 bila hasil tuning berbeda) | Konsisten dengan definisi di Lopez de Prado (2018) Bab 7 | `scripts/03_train_predict.py` pemanggilan `make_folds` | final |
-| Dedup prediksi | Satu baris per (tanggal, saham, seed) dari lipatan terkecil yang memuat tanggal itu | Validasi lipatan berikutnya tumpang tindih dengan test lipatan sebelumnya (langkah 21 < test 21); lipatan terkecil = kemunculan pertama tanggal di evaluasi | `scripts/03_train_predict.py` `gabungkan` | final |
-| Prediksi validasi pembuka OOS | 63 hari validasi pertama disimpan (sebelum test pertama) untuk tahap 4 tanpa lubang tanggal | Tahap 4 membutuhkan prediksi tiap tanggal rebalancing OOS | `scripts/03_train_predict.py` `gabungkan` | final |
-| Determinisme | `build_model` menanam seed sebelum inisialisasi; dua run dengan seed sama identik bitwise (terverifikasi dengan uji) | Reproducibility; sebaran lintas seed dilaporkan (Reimers & Gurevych 2017) | `src/lq45/models/training.py`; `tests/test_determinism.py` | final |
-| Pelanjutan dan paralelisme | Pelanjutan eksekusi terputus per (lipatan, seed); penulisan berkas atomik; paralel proses dengan thread per pekerja | Eksekusi panjang dapat dilanjutkan dan memakai 8 core tanpa merusak determinisme | `scripts/03_train_predict.py` | final |
-| Data hilang karena suspensi | Jendela ber-NaN dibuang; saham tanpa prediksi pada tanggal itu dikecualikan dari peringkat | WIKA tersuspensi 2024-01-09 s.d. 2024-04-05 dan 2025-03-07 s.d. akhir periode; SRIL dan WSKT tidak tersedia di Yahoo Finance | `src/lq45/models/dataset.py` `build_windows`; `scripts/03_train_predict.py` `muat_panel` | final |
+| CNN choices not fixed by the papers | Padding `same`, order Conv -> BatchNorm -> ReLU, default PyTorch initialization | The papers do not pin these details down; recorded explicitly so they can be audited | `src/lq45/models/cnn_bilstm.py` | final |
+| Preprocessing fit point | Fit on the training date rows of all stocks pooled together (not on window elements); the transform works per element, so the result is identical | Consistent with the preprocessing fit-point principle (training data only) and the model shared across all stocks | `scripts/03_train_predict.py` `scale_panel` | final |
+| Target cross-check | The target is recomputed from `close`; for tau=5 it is matched against the `target` column of the CSV (`allclose`) | Prevents an undetected pipeline shift at stage 2 | `src/lq45/models/dataset.py` `load_panel` | final |
+| Purge and embargo follow the selected w/tau | Purge = tau, embargo = w-1 (not the default values 5/59 if the tuning results differ) | Consistent with the definition in Lopez de Prado (2018) Chapter 7 | `scripts/03_train_predict.py` call to `make_folds` | final |
+| Prediction deduplication | One row per (date, stock, seed) from the smallest fold that contains that date | The validation of the next fold overlaps with the test of the previous fold (step 21 < test 21); the smallest fold = first occurrence of the date in evaluation | `scripts/03_train_predict.py` `merge_predictions` | final |
+| Opening OOS validation predictions | The first 63 validation days are retained (before the first test) for stage 4 with no date gaps | Stage 4 requires a prediction on every OOS rebalancing date | `scripts/03_train_predict.py` `merge_predictions` | final |
+| Determinism | `build_model` plants the seed before initialization; two runs with the same seed are bitwise identical (verified by a test) | Reproducibility; the cross-seed spread is reported (Reimers & Gurevych 2017) | `src/lq45/models/training.py`; `tests/test_determinism.py` | final |
+| Resumption and parallelism | Resumption of interrupted execution per (fold, seed); atomic file writes; process parallelism with a thread per worker | Long runs can be resumed and use 8 cores without breaking determinism | `scripts/03_train_predict.py` | final |
+| Data missing due to suspension | Windows with NaN are dropped; stocks without a prediction on that date are excluded from the ranking | WIKA was suspended from 2024-01-09 to 2024-04-05 and from 2025-03-07 to the end of the period; SRIL and WSKT are unavailable on Yahoo Finance | `src/lq45/models/dataset.py` `build_windows`; `scripts/03_train_predict.py` `load_panel_data` | final |
 
 ---
 
-## Gerbang Penilai Ranker
+## Ranker Evaluation Gate
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Model dinilai sebagai ranker | IC peringkat dan spread top-minus-bottom, bukan MSE/R2 | Keputusan portofolio tahap 4 hanya memakai urutan; penyusutan skala mempertahankan urutan tetapi merusak MSE | `scripts/05_evaluate.py` | final |
-| Peringkat ensemble lintas seed | Rata-rata pred_raw lima seed; sebaran dilaporkan | Meredam variansi pelatihan (Reimers & Gurevych 2017; Bouthillier et al. 2021) | `src/lq45/portfolio/ranking.py` `ensemble_prediksi` | final |
-| Evaluasi utama memakai role=test | Baris validasi hanya untuk early stopping, tidak dinilai | Mencegah optimisme pemilihan model masuk ke hasil | `scripts/04_optimize.py` `kerangka_prediksi` | final |
+| Model evaluated as a ranker | Rank IC and top-minus-bottom spread, not MSE/R2 | The stage 4 portfolio decision uses only the ordering; scale shrinkage preserves the ordering but breaks MSE | `scripts/05_evaluate.py` | final |
+| Cross-seed ensemble ranking | Average of pred_raw across five seeds; the spread is reported | Dampens training variance (Reimers & Gurevych 2017; Bouthillier et al. 2021) | `src/lq45/portfolio/ranking.py` `ensemble_predictions` | final |
+| Main evaluation uses role=test | Validation rows are only for early stopping, not evaluated | Prevents model-selection optimism from leaking into the results | `scripts/04_optimize.py` `prediction_frame` | final |
 
 ---
 
-## Implementasi Tahap 4-5
+## Stage 4-5 Implementation
 
-| Keputusan | Nilai | Dasar | Implementasi | Status |
+| Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| Kovarians dari data sampai tanggal rebalancing | Jendela `(d-L, d]` imbal hasil log Adj Close | Prinsip: mencegah kebocoran informasi ke depan | `src/lq45/portfolio/covariance.py` | final |
-| Label gmv memakai kovarians sampel | Sama dengan sample pada kendala yang sama | Huang et al. (2024) memakai Global Minimum Variance tahap kedua; dipertahankan sebagai pembanding bernama | `src/lq45/portfolio/covariance.py` | final |
-| Optimasi varians minimum SLSQP | Long-only, jumlah satu, batas bobot; gagal berarti sama rata | Markowitz (1952); kendala ritel IDX (long-only, sum=1) | `src/lq45/portfolio/optimize.py` | final |
-| Optimasi mean-variance target-return | min w'Σw s.t. w'μ=γ; fallback ke GMV jika infeasible | Chaweewanchon & Chaysiri (2022) Section 3.1 Persamaan (1)-(4) | `src/lq45/portfolio/optimize.py` `bobot_mean_varians_target_return` | final |
-| Expected returns passed to optimizer | Series `pred_ens` dari prediksi ensemble per tanggal rebalancing | Wang et al. (2020); Chaweewanchon & Chaysiri (2022) | `src/lq45/portfolio/backtest.py` | final |
-| Pembulatan lot sebelum fee | Target lembar dibulatkan ke bawah ke kelipatan 100; fee dihitung dari selisih posisi | Ketentuan sekuritas ritel Indonesia (beli 0,19%, jual 0,29%, lot 100) | `src/lq45/portfolio/costs.py` | final |
-| Modal awal 100 juta rupiah | Nilai bawaan `--modal`; dapat diubah | Mendekati skala ritel agar efek lot realistis; bukan sitasi | `scripts/04_optimize.py` | final |
-| Jadwal rebalancing dari kalender test | Setiap 21 tanggal prediksi test | Selaras jendela test 21 hari tahap 3 | `src/lq45/portfolio/backtest.py` | final |
-| Turnover-adjusted Sharpe | Sharpe dikali (1 - turnover); turnover = rerata \|selisih bobot\|/2 per rebalancing | Definisi implementasi; return sudah bersih dari fee sehingga penalti ganda dihindari | `scripts/05_evaluate.py` | final |
-| DSR memakai seluruh konfigurasi sebagai jumlah uji | n_uji = jumlah baris metrik | Bailey & Lopez de Prado (2014): koreksi banyak percobaan | `scripts/05_evaluate.py` | final |
+| Covariance from data up to the rebalancing date | Window `(d-L, d]` of Adj Close log-returns | Principle: prevent look-ahead information leakage | `src/lq45/portfolio/covariance.py` | final |
+| gmv label uses the sample covariance | Same as sample under the same constraints | Huang et al. (2024) use Global Minimum Variance at the second stage; kept as a named comparison | `src/lq45/portfolio/covariance.py` | final |
+| Minimum-variance optimization SLSQP | Long-only, sum to one, weight cap; failure means equal weighting | Markowitz (1952); IDX retail constraints (long-only, sum=1) | `src/lq45/portfolio/optimize.py` | final |
+| Mean-variance target-return optimization | min w'Σw s.t. w'μ=γ; fallback to GMV if infeasible | Chaweewanchon & Chaysiri (2022) Section 3.1 Equations (1)-(4) | `src/lq45/portfolio/optimize.py` `mean_variance_target_return_weights` | final |
+| Expected returns passed to optimizer | `pred_ens` series from the ensemble predictions per rebalancing date | Wang et al. (2020); Chaweewanchon & Chaysiri (2022) | `src/lq45/portfolio/backtest.py` | final |
+| Lot rounding before fees | Target shares are rounded down to a multiple of 100; the fee is computed from the change in position | Indonesian retail securities terms (buy 0.19%, sell 0.29%, lot 100) | `src/lq45/portfolio/costs.py` | final |
+| Initial capital 100 million rupiah | Default value of `--capital`; can be changed | Approximates the retail scale so the lot effect is realistic; not a citation | `scripts/04_optimize.py` | final |
+| Rebalancing schedule from the test calendar | Every 21 test prediction dates | Consistent with the 21-day test window at stage 3 | `src/lq45/portfolio/backtest.py` | final |
+| Turnover-adjusted Sharpe | Sharpe multiplied by (1 - turnover); turnover = mean \|weight difference\|/2 per rebalancing | Implementation definition; returns are already net of fees, so a double penalty is avoided | `scripts/05_evaluate.py` | final |
+| DSR uses all configurations as the number of trials | n_trials = number of metric rows | Bailey & Lopez de Prado (2014): correction for multiple trials | `scripts/05_evaluate.py` | final |
 
 ---
 
-## Rujukan artikel
+## Article references
 
-Semua entri bertanda **(OA)** adalah akses terbuka dan dapat diunduh langsung.
+All entries marked **(OA)** are open access and can be downloaded directly.
 
 - Anuno, D. C., & Madaleno, M. (2024). Testing Portfolio Optimization in Timor-Leste. *JRFM* (MDPI). **(OA)**
 - Bailey, D. H., & Lopez de Prado, M. (2014). The Deflated Sharpe Ratio. *Journal of Portfolio Management*. PDF: https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf **(OA)**
 - Bailey, D. H., Borwein, J., Lopez de Prado, M., & Zhu, Q. J. (2016). The Probability of Backtest Overfitting. *Journal of Computational Finance*. PDF: https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf **(OA)**
 - Bouthillier, X., Delaunay, P., Bronzi, M., et al. (2021). Accounting for Variance in Machine Learning Benchmarks. *MLSys*. https://arxiv.org/abs/2103.03098 **(OA)**
 - Chaweewanchon, A., & Chaysiri, R. (2022). Markowitz Mean-Variance Portfolio Optimization with Predictive Stock Selection Using Machine Learning. *IJFS*, 10(3), 64. https://doi.org/10.3390/ijfs10030064 **(OA)**
-- DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal Versus Naive Diversification. *Review of Financial Studies*. Versi kerja: https://users.nber.org/~confer/2006/si2006/ap/uppal.pdf **(OA)**
+- DeMiguel, V., Garlappi, L., & Uppal, R. (2009). Optimal Versus Naive Diversification. *Review of Financial Studies*. Working version: https://users.nber.org/~confer/2006/si2006/ap/uppal.pdf **(OA)**
 - Espiga-Fernandez, F., Garcia-Sanchez, A., & Ordieres-Mere, J. (2024). Systematic Portfolio Optimization. *Algorithms*, 17(12), 570. https://doi.org/10.3390/a17120570 **(OA)**
 - Graves, A., Mohamed, A.-R., & Hinton, G. (2013). Speech Recognition with Deep Recurrent Neural Networks. *ICASSP*, 6645-6649. PDF: https://www.cs.toronto.edu/~graves/icassp_2013.pdf **(OA)**
 - Huang, Y., et al. (2024). Enhancing Portfolio Optimization with Two-Stage Deep Learning. *Mathematics* (MDPI). **(OA)**
 - Kim, S., et al. (2025). Robust Portfolio Optimization via Supervised Deep Ensembles. arXiv:2503.13544. https://arxiv.org/abs/2503.13544 **(OA)**
-- Ledoit, O., & Wolf, M. (2004). A well-conditioned estimator for large-dimensional covariance matrices. *Journal of Multivariate Analysis*, 88(2), 365-411. Versi kerja: http://www.ledoit.net/honey.pdf **(OA)**
+- Ledoit, O., & Wolf, M. (2004). A well-conditioned estimator for large-dimensional covariance matrices. *Journal of Multivariate Analysis*, 88(2), 365-411. Working version: http://www.ledoit.net/honey.pdf **(OA)**
 - Ledoit, O., & Wolf, M. (2008). Robust performance hypothesis testing with the Sharpe ratio. *Journal of Empirical Finance*, 15(5), 850-859. PDF: http://www.ledoit.net/jef_2008pdf.pdf **(OA)**
 - Malhotra, et al. (2023). Assessing Performance and Risk-Adjusted Returns. *IJFS* (MDPI). **(OA)**
 - Reimers, N., & Gurevych, I. (2017). Reporting Score Distributions Makes a Difference. *EMNLP*. https://aclanthology.org/D17-1035 **(OA)**
-- Romano, J. P., & Wolf, M. (2005). Stepwise Multiple Testing as Formalized Data Snooping. *Econometrica*, 73(4), 1237-1282. Versi kerja tersedia di Cowles Foundation. **(OA versi kerja)**
+- Romano, J. P., & Wolf, M. (2005). Stepwise Multiple Testing as Formalized Data Snooping. *Econometrica*, 73(4), 1237-1282. Working version available at the Cowles Foundation. **(OA working version)**
 - Sebastian, T. A., & Tantia, R. (2024). Deep Learning Stock Price Prediction and Portfolio Optimization. *IJACSA*. https://thesai.org/Downloads/Volume15No9/Paper_95-Deep_Learning_for_Stock_Price_Prediction.pdf **(OA)**
 - Sen, J., & Dutta, A. (2021). Stock Portfolio Optimization Using Deep Learning LSTM Model. arXiv:2111.04709. https://arxiv.org/abs/2111.04709 **(OA)**
-- Wang, W., Li, W., Zhang, N., & Liu, K. (2020). Portfolio formation with preselection using deep learning from long-term financial data. *Expert Systems with Applications*. PDF repositori: https://centaur.reading.ac.uk/86775/3/portfolio%20formation_revised2_20191010.pdf **(OA)**
+- Wang, W., Li, W., Zhang, N., & Liu, K. (2020). Portfolio formation with preselection using deep learning from long-term financial data. *Expert Systems with Applications*. Repository PDF: https://centaur.reading.ac.uk/86775/3/portfolio%20formation_revised2_20191010.pdf **(OA)**
 - Wang, X., & Liu, X. (2025). Risk-Sensitive Deep Reinforcement Learning for Portfolio Optimization. *JRFM* (MDPI). **(OA)**
 
-**Baru untuk Pre-training (OA):**
+**New for Pre-training (OA):**
 - Kang, S. (2025). Stock Price Prediction Using Triple Barrier Labeling and Raw OHLCV Data: Evidence from Korean Markets. arXiv:2504.02249. https://arxiv.org/abs/2504.02249 **(OA)**
 - Nie, Y., Nguyen, N. H., Sinthong, P., & Kalagnanam, J. (2022). A Time Series is Worth 64 Words: Long-term Forecasting with Transformers (PatchTST). arXiv:2211.14730. https://arxiv.org/abs/2211.14730 **(OA)**
 - Cheng, M., Tao, X., Liu, Z., Liu, Q., Zhang, H., Zhang, R., & Chen, E. (2023). TimeMAE: Self-Supervised Representations of Time Series with Decoupled Masked Autoencoders. arXiv:2303.00320. https://arxiv.org/abs/2303.00320 **(OA)**
 - Tang, P., & Zhang, X. (2022). MTSMAE: Masked Autoencoders for Multivariate Time-Series Forecasting. arXiv:2210.02199. https://arxiv.org/abs/2210.02199 **(OA)**
 
-**Tidak akses terbuka** (buku dan artikel klasik; dikutip sebagai dasar, bukan untuk diunduh):
+**Not open access** (books and classic papers; cited as rationale, not for download):
 
-- Jobson, J. D., & Korkie, B. M. (1981). Performance Hypothesis Testing with the Sharpe and Treynor Measures. *Journal of Finance*, 36(4), 889-908. Uji asli yang diperbaiki oleh Ledoit & Wolf (2008).
-- Lopez de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley. Dasar purging dan embargo (Bab 7).
+- Jobson, J. D., & Korkie, B. M. (1981). Performance Hypothesis Testing with the Sharpe and Treynor Measures. *Journal of Finance*, 36(4), 889-908. The original test refined by Ledoit & Wolf (2008).
+- Lopez de Prado, M. (2018). *Advances in Financial Machine Learning*. Wiley. Basis for purging and embargo (Chapter 7).
 - Markowitz, H. (1952). Portfolio Selection. *Journal of Finance*, 7(1), 77-91.
-- Paiva, F. D., et al. (2019). Decision-making for financial trading. *Expert Systems with Applications*. Dikutip melalui Chaweewanchon & Chaysiri (2022).
+- Paiva, F. D., et al. (2019). Decision-making for financial trading. *Expert Systems with Applications*. Cited via Chaweewanchon & Chaysiri (2022).
 
-Catatan: salinan PDF artikel berada di `Literature/` (internal, tidak
-dipublikasikan karena hak cipta). Berkas ini hanya memuat sitasi, bukan isi.
+Note: PDF copies of the articles are in `Literature/` (internal, not
+published due to copyright). This file contains only citations, not content.

@@ -1,27 +1,27 @@
-"""Modul evaluasi tahap 5: metrik, DSR/PBO, signifikansi, rezim."""
+"""Evaluation stage-5 module: metrics, DSR/PBO, significance, regimes."""
 
-from lq45.evaluation.dsr_pbo import deflated_sharpe, pbo_cscv, sharpe_tahunan
+from lq45.evaluation.dsr_pbo import annualized_sharpe, deflated_sharpe, pbo_cscv
 from lq45.evaluation.metrics import (
-    bebas_risiko_harian,
-    mdd_dan_durasi,
-    ringkas_deret,
+    daily_risk_free_rate,
+    max_drawdown_and_duration,
+    summarize_series,
 )
-from lq45.evaluation.regimes import bagi_rezim
+from lq45.evaluation.regimes import split_regimes
 from lq45.evaluation.significance import (
-    kovarians_newey_west,
+    newey_west_covariance,
     romano_wolf_stepdown,
-    uji_beda_sharpe,
+    sharpe_difference_test,
 )
 
 __all__ = [
-    "bagi_rezim",
-    "bebas_risiko_harian",
+    "annualized_sharpe",
+    "daily_risk_free_rate",
     "deflated_sharpe",
-    "kovarians_newey_west",
-    "mdd_dan_durasi",
+    "max_drawdown_and_duration",
+    "newey_west_covariance",
     "pbo_cscv",
-    "ringkas_deret",
     "romano_wolf_stepdown",
-    "sharpe_tahunan",
-    "uji_beda_sharpe",
+    "sharpe_difference_test",
+    "split_regimes",
+    "summarize_series",
 ]

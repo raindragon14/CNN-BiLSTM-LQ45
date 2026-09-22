@@ -1,9 +1,9 @@
-"""Pembagian rezim pasar untuk uji ketahanan strategi.
+"""Market-regime splits for strategy robustness tests.
 
-Dasar (rincian: docs/keputusan_desain.md):
-- Uji rezim COVID: Huang et al. (2024) menguji ketahanan saat COVID.
-- Rezim OOS: COVID 2020 dan pemulihan/kenaikan suku bunga 2021-2025;
-  periode desain 2018-2019 bersifat tenang dan tidak dipakai menilai
+Basis (details: docs/keputusan_desain.md):
+- COVID regime test: Huang et al. (2024) test robustness during COVID.
+- OOS regimes: COVID 2020 and the 2021-2025 recovery/rate-hike period;
+  the 2018-2019 design period is calm and is not used for evaluation
   (E7, configs/experiment.yaml `regimes`).
 """
 
@@ -12,20 +12,20 @@ from __future__ import annotations
 import pandas as pd
 
 
-def bagi_rezim(
+def split_regimes(
     frame: pd.DataFrame,
-    kolom_tanggal: str,
-    rezim: dict[str, dict[str, str]],
+    date_column: str,
+    regimes: dict[str, dict[str, str]],
 ) -> dict[str, pd.DataFrame]:
-    """Bagi bingkai berkolom tanggal ke tiap rezim.
+    """Split a date-columned frame into each regime.
 
-    Batas memakai string `YYYY-MM-DD` inklusif dari konfigurasi.
+    Bounds use inclusive `YYYY-MM-DD` strings from the configuration.
     """
-    tanggal = pd.to_datetime(frame[kolom_tanggal])
-    keluar: dict[str, pd.DataFrame] = {}
-    for nama, batas in rezim.items():
-        awal = pd.Timestamp(batas["start"])
-        akhir = pd.Timestamp(batas["end"])
-        mask = (tanggal >= awal) & (tanggal <= akhir)
-        keluar[nama] = frame[mask].reset_index(drop=True)
-    return keluar
+    date = pd.to_datetime(frame[date_column])
+    result: dict[str, pd.DataFrame] = {}
+    for name, bounds in regimes.items():
+        start = pd.Timestamp(bounds["start"])
+        end = pd.Timestamp(bounds["end"])
+        mask = (date >= start) & (date <= end)
+        result[name] = frame[mask].reset_index(drop=True)
+    return result

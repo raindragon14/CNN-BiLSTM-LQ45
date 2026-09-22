@@ -78,13 +78,14 @@ python scripts/03_train_predict.py --mode pretrain --epochs 50 --jobs 4 --seeds 
 # Output: experiments/pretrain_<timestamp>/pretrained/encoder_seed{0-4}.pt
 
 # 4. Walk-forward with pre-trained encoder → fine-tune (two-stage)
-python scripts/03_train_predict.py --mode walk-forward-pretrain --jobs 1 --seeds 0,1,2,3,4 --resume
+python scripts/03_train_predict.py --mode walk-forward-pretrain --jobs 1 --seeds 0,1,2,3,4 \
+    --pretrained-dir experiments/pretrain_<timestamp>/pretrained --resume
 # Or baseline without pre-training:
 python scripts/03_train_predict.py --mode walk-forward --jobs 4 --seeds 0,1,2,3,4
 
 # 5. Portfolio optimization (full grid: 1,728 configs)
 python scripts/04_optimize.py --predictions experiments/<run_id>/predictions.csv
-# Quick grid (12 configs): --grid utama --seed-mode ensemble
+# Quick grid (12 configs): --grid main --seed-mode ensemble
 
 # 6. Evaluation & regime analysis
 python scripts/05_evaluate.py --portfolio <opt>/portfolio_returns.csv --baselines <opt>/baseline_returns.csv --weights <opt>/weights.csv
@@ -120,19 +121,22 @@ tests/            19 unit tests (pytest)
 
 ---
 
-## Current Status (2026-09-20)
+## Current Status (2026-09-22)
 
 | Stage | Status | Experiment ID |
 |-------|--------|---------------|
 | Data pipeline (01–02) | ✅ Complete | — |
 | Hyperparameter tuning | ✅ Complete | `tune_20260917_062213` (best: batch=64, wd=1e-4, pooling=2, units=64) |
 | Walk-forward baseline | ✅ Complete | `walk-forward_20260917_081400` (65 folds × 5 seeds) |
-| MAE pre-training | ⚠️ **In progress** | Scaling fix needed (val_loss ~1.5e15 → normalize 7 channels before MAE) |
-| Walk-forward + pre-train | ⏳ Pending | Requires working pre-trained encoders |
-| Full grid optimization | ⏳ Pending | Grid utama (12) done: `optimize_20260918_162336`; full grid (1,728) queued |
+| MAE pre-training | ✅ Fixed, re-run pending | Masking + scaling bugs fixed; regenerate encoders |
+| Walk-forward + pre-train | ⏳ Pending | Requires regenerated pre-trained encoders |
+| Full grid optimization | ✅ Baseline done | Main grid (12): `optimize_20260918_162336`; full grid (1,728): `optimize_20260918_050942` (baseline); pre-train grid queued |
 | Evaluation & regime analysis | ⏳ Pending | Requires full grid outputs |
 
-> **Note**: Results shown are from intermediate runs. Final journal submission pending full grid evaluation on both baseline and pre-trained prediction sets.
+> **Note**: Correctness fixes (2026-09-22) changed MAE pre-training (per-sample masking), pre-trained
+> encoder resolution, MV optimizer determinism, and Romano-Wolf. All prior `experiments/pretrain_*`
+> outputs are invalid. Results shown are from intermediate runs; final journal submission pending full
+> grid evaluation on both baseline and pre-trained prediction sets.
 
 ---
 

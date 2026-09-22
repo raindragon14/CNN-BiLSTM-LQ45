@@ -1,4 +1,4 @@
-"""Rekayasa fitur dan target."""
+"""Feature and target engineering."""
 
 from lq45.features.build import (
     build_macro,

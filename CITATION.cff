@@ -3,10 +3,10 @@ message: "If you use this software, please cite it as below."
 authors:
   - family-names: "Pandanarang"
     given-names: "Reihan"
-    orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: isi ORCID jika ada
+    orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: fill in the ORCID if available
 title: "NeuralAlpha: Two-Stage Portfolio Optimization with Self-Supervised MAE Pre-training and CNN-BiLSTM Preselection on LQ45"
 version: 0.1.0
-doi: ""  # TODO: isi DOI jika sudah ada (Zenodo/Figshare)
+doi: ""  # TODO: fill in the DOI when available (Zenodo/Figshare)
 date-released: 2026-09-20
 url: "https://github.com/raindragon14/CNN-BiLSTM-LQ45"
 license: "MIT"

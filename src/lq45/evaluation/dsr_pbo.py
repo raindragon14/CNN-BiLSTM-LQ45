@@ -1,11 +1,12 @@
-"""Deflated Sharpe Ratio dan Probability of Backtest Overfitting.
+"""Deflated Sharpe Ratio and Probability of Backtest Overfitting.
 
-Dasar (rincian: docs/keputusan_desain.md):
-- DSR: Bailey & Lopez de Prado (2014) mengoreksi Sharpe terhadap
-  banyaknya percobaan dan ketaknormalan (skew, kurtosis).
-- PBO/CSCV: Bailey et al. (2016) mengukur peluang strategi terpilih
-  overfit lewat validasi silang simetris kombinatorial.
-- Keduanya menjawab E16 (kontrol backtest overfitting) bersama
+Basis (details: docs/keputusan_desain.md):
+- DSR: Bailey & Lopez de Prado (2014) correct the Sharpe ratio for the
+  number of trials and non-normality (skew, kurtosis).
+- PBO/CSCV: Bailey et al. (2016) measure the probability that the
+  selected strategy is overfit via combinatorial symmetric
+  cross-validation.
+- Both answer E16 (backtest overfitting control) together with
   Romano & Wolf (2005).
 """
 
@@ -19,47 +20,52 @@ import pandas as pd
 from scipy.stats import norm
 
 
-def sharpe_tahunan(imbal: pd.Series, tahun: int = 252) -> float:
-    """Sharpe tahunan dengan risk-free nol (untuk pembanding internal)."""
-    r = imbal.to_numpy(dtype=float)
+def annualized_sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
+    """Annualized Sharpe with a zero risk-free rate (internal comparison)."""
+    r = returns.to_numpy(dtype=float)
     vol = float(np.std(r, ddof=1)) if len(r) > 1 else 0.0
     if vol <= 0:
         return 0.0
-    return float(np.sqrt(tahun) * r.mean() / vol)
+    return float(np.sqrt(periods_per_year) * r.mean() / vol)
 
 
-def sharpe_benchmark_harapan(n_uji: int, varian: float) -> float:
-    """Perkiraan Sharpe acuan di bawah nol bila diuji n_uji strategi.
+def expected_max_sharpe(n_trials: int, variance: float) -> float:
+    """Expected benchmark Sharpe under the null when n_trials strategies are tested.
 
-    Mengikuti Bailey & Lopez de Prado (2014) Bagian 3: acuan memakai
-    pendekatan nilai harapan maksimum dari n_uji peubah acak.
+    Follows Bailey & Lopez de Prado (2014) Section 3: the benchmark uses
+    the expected maximum of n_trials random variables.
     """
-    if n_uji < 2 or varian <= 0:
+    if n_trials < 2 or variance <= 0:
         return 0.0
     gamma = 0.5772156649
     return float(
-        math.sqrt(varian) * ((1.0 - gamma) * norm.ppf(1.0 - 1.0 / n_uji))
-        + gamma * norm.ppf(1.0 - 1.0 / (n_uji * math.e))
+        math.sqrt(variance) * ((1.0 - gamma) * norm.ppf(1.0 - 1.0 / n_trials))
+        + gamma * norm.ppf(1.0 - 1.0 / (n_trials * math.e))
     )
 
 
 def deflated_sharpe(
-    imbal: pd.Series, n_uji: int, acuan: float = 0.0, tahun: int = 252
+    returns: pd.Series,
+    n_trials: int,
+    benchmark: float = 0.0,
+    periods_per_year: int = 252,
 ) -> dict[str, float]:
-    """DSR: peluang Sharpe sejati di atas acuan setelah koreksi.
+    """DSR: probability the true Sharpe exceeds the benchmark after correction.
 
-    Mengembalikan rasio Sharpe, acuan harapan, dan DSR (0-1).
+    Returns the Sharpe ratio, the expected benchmark, and the DSR (0-1).
     """
-    r = imbal.to_numpy(dtype=float)
+    r = returns.to_numpy(dtype=float)
     n = len(r)
-    sr = sharpe_tahunan(imbal, tahun)
+    sr = annualized_sharpe(returns, periods_per_year)
     if n < 3:
-        return {"sharpe": sr, "benchmark": acuan, "dsr": 0.5}
+        return {"sharpe": sr, "benchmark": benchmark, "dsr": 0.5}
     skew = float(pd.Series(r).skew())
-    kurt = float(pd.Series(r).kurtosis())  # ekses terhadap normal
-    acuan_harapan = max(acuan, sharpe_benchmark_harapan(n_uji, 1.0 / n * tahun))
-    pembilang = (sr - acuan_harapan) * math.sqrt(max(n - 1, 1))
-    penyebut = math.sqrt(
+    kurt = float(pd.Series(r).kurtosis())  # excess over normal
+    benchmark_expectation = max(
+        benchmark, expected_max_sharpe(n_trials, 1.0 / n * periods_per_year)
+    )
+    numerator = (sr - benchmark_expectation) * math.sqrt(max(n - 1, 1))
+    denominator = math.sqrt(
         max(
             1.0 - skew * sr + (kurt / 4.0) * sr * sr,
             1e-12,
@@ -67,43 +73,43 @@ def deflated_sharpe(
     )
     return {
         "sharpe": sr,
-        "benchmark": float(acuan_harapan),
-        "dsr": float(norm.cdf(pembilang / penyebut)),
+        "benchmark": float(benchmark_expectation),
+        "dsr": float(norm.cdf(numerator / denominator)),
     }
 
 
 def pbo_cscv(
-    matriks_imbal: pd.DataFrame, bagian: int = 8, seed: int = 0
+    returns_matrix: pd.DataFrame, n_groups: int = 8, seed: int = 0
 ) -> dict[str, float]:
-    """PBO lewat CSCV: peluang pilihan dalam-sampel kalah out-of-sample.
+    """PBO via CSCV: probability the in-sample choice loses out-of-sample.
 
-    Matriks berkolom strategi dan berbaris tanggal. Baris dibagi
-    menjadi `bagian` segmen sama panjang; tiap belahan memakai separuh
-    segmen sebagai dalam-sampel. Strategi terbaik dalam-sampel
-    dibandingkan peringkatnya di luar-sampel; PBO = peluang logit
-    negatif (Bailey et al. 2016).
+    The matrix has strategies as columns and dates as rows. Rows are
+    split into `n_groups` equal-length segments; each fold uses half the
+    segments as in-sample. The best in-sample strategy is compared with
+    its out-of-sample rank; PBO = probability of a negative logit
+    (Bailey et al. 2016).
     """
     rng = np.random.default_rng(seed)
-    frame = matriks_imbal.dropna()
+    frame = returns_matrix.dropna()
     n = len(frame)
     n_strat = len(frame.columns)
-    segmen = np.array_split(np.arange(n), bagian)
-    separuh = bagian // 2
+    segments = np.array_split(np.arange(n), n_groups)
+    half = n_groups // 2
     logit: list[float] = []
-    for dalam in itertools.combinations(range(bagian), separuh):
-        dalam = list(dalam)
-        luar = [s for s in range(bagian) if s not in dalam]
-        idx_dalam = np.concatenate([segmen[s] for s in dalam])
-        idx_luar = np.concatenate([segmen[s] for s in luar])
-        sr_dalam = frame.iloc[idx_dalam].apply(sharpe_tahunan)
-        sr_luar = frame.iloc[idx_luar].apply(sharpe_tahunan)
-        peringkat_luar = sr_luar.rank(ascending=False)
-        terbaik = sr_dalam.idxmax()
-        posisi = float(peringkat_luar[terbaik])
-        # Logit positif bila terbaik dalam-sampel berada di atas
-        # median luar-sampel; PBO = peluang logit negatif.
-        logit.append(math.log((n_strat + 1.0 - posisi) / posisi))
-    _ = rng  # seed dicatat untuk audit; pembelahan kombinatorial baku
+    for in_groups in itertools.combinations(range(n_groups), half):
+        in_groups = list(in_groups)
+        out_groups = [s for s in range(n_groups) if s not in in_groups]
+        in_idx = np.concatenate([segments[s] for s in in_groups])
+        out_idx = np.concatenate([segments[s] for s in out_groups])
+        sr_in = frame.iloc[in_idx].apply(annualized_sharpe)
+        sr_out = frame.iloc[out_idx].apply(annualized_sharpe)
+        out_ranks = sr_out.rank(ascending=False)
+        best = sr_in.idxmax()
+        position = float(out_ranks[best])
+        # Positive logit when the in-sample best ranks above the
+        # out-of-sample median; PBO = probability of a negative logit.
+        logit.append(math.log((n_strat + 1.0 - position) / position))
+    _ = rng  # seed recorded for audit; the combinatorial split is standard
     logit_arr = np.array(logit, dtype=float)
     return {
         "pbo": float((logit_arr < 0).mean()) if len(logit_arr) else 0.5,

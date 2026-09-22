@@ -1,14 +1,13 @@
-"""Panel fitur dan jendela geser untuk model bersama seluruh saham.
+"""Feature panel and sliding windows for the pooled model across all stocks.
 
-Keputusan yang mendasari (rincian: docs/keputusan_desain.md):
-- Satu model bersama untuk semua saham: Espiga-Fernandez et al. (2024)
-  memakai tensor `lookback x instrumen x fitur`; Huang et al. (2024)
-  memakai tensor `32 x 15`.
-- Target log-return: Sen & Dutta (2021) menghitung imbal hasil sebagai
-  log return.
-- Target dihitung ulang dari kolom `close` agar parameter horizon menjadi
-  sumber acuan tunggal; saat horizon 5, hasilnya dicocokkan dengan kolom
-  `target` buatan tahap 2 sebagai pemeriksaan silang.
+Underlying decisions (details: docs/keputusan_desain.md):
+- A single pooled model for all stocks: Espiga-Fernandez et al. (2024)
+  use a `lookback x instruments x features` tensor; Huang et al. (2024)
+  use a `32 x 15` tensor.
+- Log-return target: Sen & Dutta (2021) compute returns as log returns.
+- The target is recomputed from the `close` column so the horizon
+  parameter is the single source of truth; at horizon 5 the result is
+  matched against the stage-2 `target` column as a cross-check.
 """
 
 from __future__ import annotations
@@ -34,21 +33,21 @@ FEATURE_COLUMNS: tuple[str, ...] = (
 
 @dataclass
 class PanelData:
-    """Panel seluruh saham pada satu kalender bursa.
+    """Panel of all stocks on a single exchange calendar.
 
-    Setiap larik berindeks tanggal yang sama (`dates`) dan bertipe float32.
+    Every array shares the same date index (`dates`) and is float32.
     """
 
     tickers: list[str]
     dates: pd.DatetimeIndex
-    features: dict[str, np.ndarray]  # (T, 8), urutan FEATURE_COLUMNS
-    target: dict[str, np.ndarray]  # (T,) log-return horizon hari
-    close: dict[str, np.ndarray]  # (T,) harga penutupan terkoreksi
+    features: dict[str, np.ndarray]  # (T, 8), in FEATURE_COLUMNS order
+    target: dict[str, np.ndarray]  # (T,) horizon-day log-return
+    close: dict[str, np.ndarray]  # (T,) adjusted closing price
 
 
 @dataclass
 class RawStockData:
-    """Data mentah per saham untuk pre-training (kalender independen)."""
+    """Raw per-stock data for pre-training (independent calendar)."""
 
     ticker: str
     dates: pd.DatetimeIndex
@@ -56,65 +55,67 @@ class RawStockData:
     close: np.ndarray  # (T,)
 
 
-def nama_berkas(ticker: str) -> str:
-    """Nama berkas tanpa akhiran `.JK`."""
+def stock_file_name(ticker: str) -> str:
+    """File name without the `.JK` suffix."""
     return ticker.replace(".JK", "")
 
 
 def forward_log_return(close: np.ndarray, horizon: int) -> np.ndarray:
-    """Target log-return `horizon` hari ke depan; NaN pada ujung kanan."""
-    hasil = np.full_like(close, np.nan)
+    """Forward `horizon`-day log-return target; NaN on the right edge."""
+    result = np.full_like(close, np.nan)
     if horizon <= 0 or len(close) <= horizon:
-        return hasil
-    hasil[:-horizon] = np.log(close[horizon:] / close[:-horizon])
-    return hasil
+        return result
+    result[:-horizon] = np.log(close[horizon:] / close[:-horizon])
+    return result
 
 
 def load_panel(processed_dir: Path, tickers: Sequence[str], horizon: int) -> PanelData:
-    """Muat panel fitur terproses dan hitung ulang target.
+    """Load the processed feature panel and recompute the target.
 
-    `tickers` memakai akhiran `.JK` (bentuk di `configs/universe.yaml`);
-    berkas terproses tidak memakai akhiran itu.
+    `tickers` carry the `.JK` suffix (as in `configs/universe.yaml`); the
+    processed files do not use that suffix.
     """
     if not tickers:
-        raise ValueError("daftar ticker kosong")
-    fitur: dict[str, np.ndarray] = {}
+        raise ValueError("empty ticker list")
+    features: dict[str, np.ndarray] = {}
     target: dict[str, np.ndarray] = {}
     close: dict[str, np.ndarray] = {}
     dates: pd.DatetimeIndex | None = None
 
     for ticker in tickers:
-        path = processed_dir / f"{nama_berkas(ticker)}.csv"
+        path = processed_dir / f"{stock_file_name(ticker)}.csv"
         if not path.exists():
-            raise FileNotFoundError(f"fitur terproses tidak ditemukan: {path}")
+            raise FileNotFoundError(f"processed features not found: {path}")
         frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date")
         if dates is None:
             dates = frame.index
         elif not frame.index.equals(dates):
-            raise ValueError(f"kalender {ticker} tidak sama dengan kalender acuan")
-        harga = frame["close"].to_numpy(dtype=np.float32)
-        hasil_target = forward_log_return(harga, horizon)
+            raise ValueError(
+                f"calendar for {ticker} differs from the reference calendar"
+            )
+        close_prices = frame["close"].to_numpy(dtype=np.float32)
+        computed_target = forward_log_return(close_prices, horizon)
         if horizon == 5:
             csv_target = frame["target"].to_numpy(dtype=np.float32)
             if not np.allclose(
-                hasil_target,
+                computed_target,
                 csv_target,
                 equal_nan=True,
                 rtol=1e-4,
                 atol=1e-7,
             ):
                 raise ValueError(
-                    f"target hitung ulang tidak cocok dengan kolom target "
-                    f"CSV: {ticker}"
+                    f"recomputed target does not match the CSV target column: "
+                    f"{ticker}"
                 )
-        fitur[ticker] = frame[list(FEATURE_COLUMNS)].to_numpy(dtype=np.float32)
-        target[ticker] = hasil_target
-        close[ticker] = harga
+        features[ticker] = frame[list(FEATURE_COLUMNS)].to_numpy(dtype=np.float32)
+        target[ticker] = computed_target
+        close[ticker] = close_prices
 
     return PanelData(
         tickers=list(tickers),
         dates=dates,
-        features=fitur,
+        features=features,
         target=target,
         close=close,
     )
@@ -128,37 +129,37 @@ def build_windows(
     stop: int,
     banned: Sequence[tuple[int, int]] = (),
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Jendela untuk tanggal `[start, stop)` di luar rentang `banned`.
+    """Windows for dates `[start, stop)` outside the `banned` ranges.
 
-    Sampel tanggal `t` memakai fitur `[t-lookback+1 .. t]` dan label
-    `target[t]`; tanggal yang lebih muda dari `lookback-1` tidak memiliki
-    jendela lengkap sehingga tidak ikut. Jendela yang memuat NaN dibuang.
+    A sample at date `t` uses features `[t-lookback+1 .. t]` and label
+    `target[t]`; dates younger than `lookback-1` have no full window and
+    are skipped. Windows containing NaN are dropped.
 
-    Mengembalikan `(X, y, idx)` dengan `X` berbentuk `(N, F, lookback)`,
-    `y` label, dan `idx` posisi tanggal dalam larik masukan.
+    Returns `(X, y, idx)` where `X` has shape `(N, F, lookback)`, `y` is
+    the label, and `idx` is the date position within the input array.
     """
-    awal_t = max(start, lookback - 1)
-    n = stop - awal_t
-    kosong = np.empty((0, features.shape[1], lookback), dtype=np.float32)
+    first_index = max(start, lookback - 1)
+    n = stop - first_index
+    empty = np.empty((0, features.shape[1], lookback), dtype=np.float32)
     if n <= 0:
-        return kosong, np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int64)
+        return empty, np.empty(0, dtype=np.float32), np.empty(0, dtype=np.int64)
 
-    segmen = features[awal_t - lookback + 1 : stop]
-    jendela = np.lib.stride_tricks.sliding_window_view(segmen, lookback, axis=0)
-    idx = np.arange(awal_t, stop, dtype=np.int64)
+    segment = features[first_index - lookback + 1 : stop]
+    windows = np.lib.stride_tricks.sliding_window_view(segment, lookback, axis=0)
+    idx = np.arange(first_index, stop, dtype=np.int64)
 
-    pakai = np.ones(n, dtype=bool)
+    keep = np.ones(n, dtype=bool)
     for a, b in banned:
-        pakai[(idx >= a) & (idx < b)] = False
-    jendela = jendela[pakai]
-    idx = idx[pakai]
+        keep[(idx >= a) & (idx < b)] = False
+    windows = windows[keep]
+    idx = idx[keep]
     label = target[idx]
 
-    valid = ~np.isnan(jendela).any(axis=(1, 2)) & ~np.isnan(label)
-    return jendela[valid], label[valid], idx[valid]
+    valid = ~np.isnan(windows).any(axis=(1, 2)) & ~np.isnan(label)
+    return windows[valid], label[valid], idx[valid]
 
 
-# Pretrain channels: OHLCV + BI-7DRRR + JISDOR (7 channel)
+# Pretrain channels: OHLCV + BI-7DRRR + JISDOR (7 channels)
 PRETRAIN_CHANNELS: tuple[str, ...] = (
     "open",
     "high",
@@ -171,24 +172,24 @@ PRETRAIN_CHANNELS: tuple[str, ...] = (
 
 
 def load_raw_stocks(raw_dir: Path, tickers: Sequence[str]) -> list[RawStockData]:
-    """Muat data mentah OHLCV + makro per saham untuk pre-training.
+    """Load raw per-stock OHLCV + macro data for pre-training.
 
-    Setiap saham diproses independen dengan kalendernya sendiri.
-    Channel: 7 (OHLCV + BI-7DRRR + JISDOR).
+    Each stock is processed independently on its own calendar.
+    Channels: 7 (OHLCV + BI-7DRRR + JISDOR).
     """
     if not tickers:
-        raise ValueError("daftar ticker kosong")
+        raise ValueError("empty ticker list")
 
     prices_dir = raw_dir / "prices"
     if not prices_dir.exists():
-        raise FileNotFoundError(f"direktori prices tidak ditemukan: {prices_dir}")
+        raise FileNotFoundError(f"prices directory not found: {prices_dir}")
 
     macro_dir = raw_dir / "macro"
     bi_path = macro_dir / "bi_7drrr.csv"
     jisdor_path = macro_dir / "jisdor.csv"
 
     if not bi_path.exists() or not jisdor_path.exists():
-        raise FileNotFoundError(f"file makro tidak ditemukan: {bi_path}, {jisdor_path}")
+        raise FileNotFoundError(f"macro files not found: {bi_path}, {jisdor_path}")
 
     bi_df = pd.read_csv(bi_path, parse_dates=["date"]).set_index("date")
     jisdor_df = pd.read_csv(jisdor_path, parse_dates=["date"]).set_index("date")
@@ -201,7 +202,7 @@ def load_raw_stocks(raw_dir: Path, tickers: Sequence[str]) -> list[RawStockData]
     stocks: list[RawStockData] = []
 
     for ticker in tickers:
-        path = prices_dir / f"{nama_berkas(ticker)}.csv"
+        path = prices_dir / f"{stock_file_name(ticker)}.csv"
         if not path.exists():
             continue
         frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date")
@@ -253,21 +254,21 @@ def build_pretrain_windows(
     start: int,
     stop: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Bangun jendela untuk pre-training (tanpa label, tanpa banned).
+    """Build windows for pre-training (no labels, no banned ranges).
 
     Returns:
         X: (N, C, lookback)
-        idx: (N,) posisi tanggal
+        idx: (N,) date positions
     """
-    awal_t = max(start, lookback - 1)
-    n = stop - awal_t
-    kosong = np.empty((0, features.shape[1], lookback), dtype=np.float32)
+    first_index = max(start, lookback - 1)
+    n = stop - first_index
+    empty = np.empty((0, features.shape[1], lookback), dtype=np.float32)
     if n <= 0:
-        return kosong, np.empty(0, dtype=np.int64)
+        return empty, np.empty(0, dtype=np.int64)
 
-    segmen = features[awal_t - lookback + 1 : stop]
-    jendela = np.lib.stride_tricks.sliding_window_view(segmen, lookback, axis=0)
-    idx = np.arange(awal_t, stop, dtype=np.int64)
+    segment = features[first_index - lookback + 1 : stop]
+    windows = np.lib.stride_tricks.sliding_window_view(segment, lookback, axis=0)
+    idx = np.arange(first_index, stop, dtype=np.int64)
 
-    valid = ~np.isnan(jendela).any(axis=(1, 2))
-    return jendela[valid], idx[valid]
+    valid = ~np.isnan(windows).any(axis=(1, 2))
+    return windows[valid], idx[valid]

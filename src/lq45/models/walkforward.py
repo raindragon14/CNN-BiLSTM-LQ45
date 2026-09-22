@@ -1,14 +1,14 @@
-"""Generator lipatan walk-forward bersarang dengan purge dan embargo.
+"""Nested walk-forward fold generator with purge and embargo.
 
-Definisi operasional mengikuti Lopez de Prado (2018) Bab 7:
-- Purge: sampel latih tanggal `t` memakai label `t + tau`; label tidak
-  boleh jatuh pada periode evaluasi, sehingga jendela latih dipotong
-  menjadi `[0, awal_validasi - tau)`.
-- Embargo: setiap periode test lampau melahirkan larangan sepanjang
-  `lookback - 1` hari setelah test berakhir; bila jendela latih melebar
-  menyerap daerah itu, sampel di dalamnya dibuang.
+Operational definitions follow Lopez de Prado (2018) Chapter 7:
+- Purge: a training sample at date `t` uses label `t + tau`; the label
+  must not fall inside the evaluation period, so the training window is
+  truncated to `[0, validation_start - tau)`.
+- Embargo: each past test period produces a ban of `lookback - 1` days
+  after the test ends; if the training window expands to absorb that
+  region, samples inside it are dropped.
 
-Semua batas memakai posisi (indeks) kalender bursa, bukan tanggal.
+All boundaries use exchange-calendar positions (indices), not dates.
 """
 
 from __future__ import annotations
@@ -24,18 +24,18 @@ DAYS_PER_YEAR = 252
 
 @dataclass
 class Fold:
-    """Satu lipatan walk-forward; batas berupa indeks kalender."""
+    """A single walk-forward fold; boundaries are calendar indices."""
 
     id: int
-    train: tuple[int, int]  # [awal, akhir); purge sudah dipotong
+    train: tuple[int, int]  # [start, end); purge already applied
     validation: tuple[int, int]
     test: tuple[int, int]
-    banned: list[tuple[int, int]]  # embargo dari test lampau
+    banned: list[tuple[int, int]]  # embargo from past tests
 
 
 @dataclass
 class DesignSplit:
-    """Pembagian periode desain: latih lalu validasi (tanpa test)."""
+    """Design-period split: train then validation (no test)."""
 
     train: tuple[int, int]
     validation: tuple[int, int]
@@ -48,13 +48,13 @@ def make_folds(
     purge_days: int | None = None,
     embargo_days: int | None = None,
 ) -> list[Fold]:
-    """Bangun seluruh lipatan dari kalender sepanjang `n_days` hari.
+    """Build all folds from a calendar `n_days` long.
 
-    Bila `purge_days` dan `embargo_days` tidak diberikan, nilainya diambil
-    dari `split_cfg` (baku 5 dan 59). Lipatan dibentuk selama periode test
-    masih muat di dalam kalender.
+    If `purge_days` and `embargo_days` are not given, they are taken from
+    `split_cfg` (defaults 5 and 59). Folds are generated as long as the
+    test period still fits inside the calendar.
     """
-    train_awal = int(split_cfg["initial_train_years"]) * DAYS_PER_YEAR
+    initial_train = int(split_cfg["initial_train_years"]) * DAYS_PER_YEAR
     val = int(split_cfg["validation_days"])
     test = int(split_cfg["test_days"])
     step = int(split_cfg["step_days"])
@@ -63,31 +63,29 @@ def make_folds(
     if embargo_days is None:
         embargo_days = int(split_cfg["embargo_days"])
 
-    lipatan: list[Fold] = []
-    akhir_test_terdahulu: list[int] = []
+    folds: list[Fold] = []
+    previous_test_ends: list[int] = []
     k = 0
     while True:
-        awal_val = train_awal + k * step
-        awal_test = awal_val + val
-        akhir_test = awal_test + test
-        if akhir_test > n_days:
+        val_start = initial_train + k * step
+        test_start = val_start + val
+        test_end = test_start + test
+        if test_end > n_days:
             break
-        train = (0, max(0, awal_val - purge_days))
-        banned = [
-            (akhir, min(akhir + embargo_days, n_days)) for akhir in akhir_test_terdahulu
-        ]
-        lipatan.append(
+        train = (0, max(0, val_start - purge_days))
+        banned = [(end, min(end + embargo_days, n_days)) for end in previous_test_ends]
+        folds.append(
             Fold(
                 id=k,
                 train=train,
-                validation=(awal_val, awal_test),
-                test=(awal_test, akhir_test),
+                validation=(val_start, test_start),
+                test=(test_start, test_end),
                 banned=banned,
             )
         )
-        akhir_test_terdahulu.append(akhir_test)
+        previous_test_ends.append(test_end)
         k += 1
-    return lipatan
+    return folds
 
 
 def design_split(
@@ -96,29 +94,29 @@ def design_split(
     validate_range: str,
     horizon: int,
 ) -> DesignSplit:
-    """Pembagian periode desain dari rentang `YYYY-MM-DD/YYYY-MM-DD`.
+    """Design-period split from `YYYY-MM-DD/YYYY-MM-DD` ranges.
 
-    Purge memotong `horizon` hari terakhir latih agar label tidak jatuh
-    pada periode validasi.
+    The purge truncates the last `horizon` training days so the label does
+    not fall inside the validation period.
     """
-    t0, t1 = (pd.Timestamp(batas) for batas in train_range.split("/"))
-    v0, v1 = (pd.Timestamp(batas) for batas in validate_range.split("/"))
+    train_start, train_end = (pd.Timestamp(bound) for bound in train_range.split("/"))
+    val_start, val_end = (pd.Timestamp(bound) for bound in validate_range.split("/"))
 
-    posisi_latih = np.flatnonzero((dates >= t0) & (dates <= t1))
-    posisi_validasi = np.flatnonzero((dates >= v0) & (dates <= v1))
-    if len(posisi_latih) == 0 or len(posisi_validasi) == 0:
+    train_positions = np.flatnonzero((dates >= train_start) & (dates <= train_end))
+    validation_positions = np.flatnonzero((dates >= val_start) & (dates <= val_end))
+    if len(train_positions) == 0 or len(validation_positions) == 0:
         raise ValueError(
-            f"rentang desain kosong: latih {len(posisi_latih)} hari, "
-            f"validasi {len(posisi_validasi)} hari"
+            f"empty design range: {len(train_positions)} train days, "
+            f"{len(validation_positions)} validation days"
         )
-    train = (int(posisi_latih[0]), int(posisi_latih[-1]) + 1 - horizon)
-    validation = (int(posisi_validasi[0]), int(posisi_validasi[-1]) + 1)
+    train = (int(train_positions[0]), int(train_positions[-1]) + 1 - horizon)
+    validation = (int(validation_positions[0]), int(validation_positions[-1]) + 1)
     return DesignSplit(train=train, validation=validation)
 
 
 @dataclass
 class PretrainSplit:
-    """Pembagian untuk pre-training: semua data split train/val saja."""
+    """Split for pre-training: all data split train/val only."""
 
     train: tuple[int, int]
     validation: tuple[int, int]
@@ -128,17 +126,17 @@ def make_pretrain_split(
     n_days: int,
     val_ratio: float = 0.1,
 ) -> PretrainSplit:
-    """Split sederhana untuk pre-training: train + val (tidak ada test).
+    """Simple split for pre-training: train + val (no test).
 
-    Pre-training menggunakan SEMUA data (tidak ada purge/embargo karena
-    tidak ada label yang bocor). Split berdasarkan ratio.
+    Pre-training uses ALL data (no purge/embargo because no labels leak).
+    The split is by ratio.
 
     Args:
-        n_days: total panjang kalender
-        val_ratio: fraksi untuk validasi (default 10%)
+        n_days: total calendar length
+        val_ratio: fraction for validation (default 10%)
 
     Returns:
-        PretrainSplit dengan train/val indices
+        PretrainSplit with train/val indices
     """
     split_idx = int(n_days * (1 - val_ratio))
     return PretrainSplit(

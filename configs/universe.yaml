@@ -1,16 +1,17 @@
-# Pool kandidat LQ45 untuk penelitian.
+# LQ45 candidate pool for the study.
 #
-# Sumber: IDX LQ45 Company Profiles, periode Agustus 2019 - Januari 2020
-# (45 konstituen resmi yang tercantum pada halaman "Contents").
-#   Dokumen asli : https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
-#   Arsip        : https://web.archive.org/web/20210614191119/https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
+# Source: IDX LQ45 Company Profiles, August 2019 - January 2020 period
+# (the 45 official constituents listed on the "Contents" page).
+#   Original document : https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
+#   Archive           : https://web.archive.org/web/20210614191119/https://www.idx.co.id/media/7599/lq45-company-profiles-august-2019.pdf
 #
-# Dasar pemilihan:
-# - Dipakai komposisi yang berlaku pada awal periode out-of-sample (Januari
-#   2020), bukan komposisi terkini, agar tidak memasukkan informasi masa depan
-#   dan tidak menimbulkan bias survivorship dari daftar akhir periode.
-# - Pool dibekukan (fixed) untuk seluruh periode penelitian; keterbatasan ini
-#   dicatat pada data/README.md.
+# Selection rationale:
+# - The composition in force at the start of the out-of-sample period (January
+#   2020) is used rather than the current composition, so that no future
+#   information is introduced and no survivorship bias arises from the
+#   end-of-period list.
+# - The pool is frozen (fixed) for the entire study period; this limitation is
+#   recorded in data/README.md.
 period: "2019-08/2020-01"
 source: "IDX LQ45 Company Profiles, Agustus 2019"
 index: LQ45

@@ -1,7 +1,7 @@
-"""Decoder rekonstruksi untuk Masked Autoencoder (MAE).
+"""Reconstruction decoder for the Masked Autoencoder (MAE).
 
-Menerima latent sequence dari encoder, upsampling kembali ke panjang
-lookback asli, lalu memprediksi 5 channel OHLCV per timestep.
+Takes the latent sequence from the encoder, upsamples back to the
+original lookback length, then predicts 5 OHLCV channels per timestep.
 """
 
 from __future__ import annotations
@@ -11,12 +11,12 @@ from torch import nn
 
 
 class MAEDecoder(nn.Module):
-    """Decoder ConvTranspose1d + Linear untuk merekonstruksi OHLCV.
+    """ConvTranspose1d + Linear decoder for reconstructing OHLCV.
 
-    Arsitektur:
-      - Input: (B, L, H) dari encoder (L = w // pooling)
-      - ConvTranspose1d layers untuk upsampling ke panjang lookback
-      - Linear layer final: hidden -> 5 channel (OHLCV)
+    Architecture:
+      - Input: (B, L, H) from the encoder (L = w // pooling)
+      - ConvTranspose1d layers to upsample to the lookback length
+      - Final Linear layer: hidden -> 5 channels (OHLCV)
     """
 
     def __init__(
@@ -31,25 +31,25 @@ class MAEDecoder(nn.Module):
     ) -> None:
         super().__init__()
         if activation != "relu":
-            raise ValueError(f"aktivasi tidak didukung: {activation}")
+            raise ValueError(f"unsupported activation: {activation}")
 
         self.latent_dim = latent_dim
         self.n_channels = n_channels
         self.lookback = lookback
         self.pooling = pooling
-        self.seq_len = lookback // pooling  # panjang sequence setelah pooling
+        self.seq_len = lookback // pooling  # sequence length after pooling
 
-        # Proyeksi latent_dim -> hidden
+        # Project latent_dim -> hidden
         self.proj = nn.Linear(latent_dim, hidden)
 
-        # ConvTranspose1d untuk upsampling
+        # ConvTranspose1d for upsampling
         # seq_len -> lookback via strided transpose conv
-        blok: list[nn.Module] = []
+        blocks: list[nn.Module] = []
         in_ch = hidden
         current_len = self.seq_len
 
-        # Hitung strides yang dibutuhkan untuk naik dari seq_len ke lookback
-        # Gunakan pooling factor sebagai stride utama
+        # Compute the strides needed to grow from seq_len to lookback
+        # Use the pooling factor as the primary stride
         stride = pooling
         kernel = stride * 2
         padding = stride // 2
@@ -57,7 +57,7 @@ class MAEDecoder(nn.Module):
 
         for i in range(layers):
             out_ch = hidden
-            blok.append(
+            blocks.append(
                 nn.ConvTranspose1d(
                     in_ch,
                     out_ch,
@@ -68,36 +68,36 @@ class MAEDecoder(nn.Module):
                 )
             )
             if i < layers - 1:
-                blok.append(nn.BatchNorm1d(out_ch))
-                blok.append(nn.ReLU())
+                blocks.append(nn.BatchNorm1d(out_ch))
+                blocks.append(nn.ReLU())
             in_ch = out_ch
             current_len = (
                 (current_len - 1) * stride - 2 * padding + kernel + output_padding
             )
 
-        # Jika panjang belum pas, tambah layer penyesuaian
+        # If the length does not match yet, add an adjustment layer
         if current_len != lookback:
-            # Layer 1x1 conv untuk penyesuaian channel, lalu interpolate
-            blok.append(nn.Conv1d(hidden, hidden, 1))
+            # 1x1 conv to adjust channels, then interpolate
+            blocks.append(nn.Conv1d(hidden, hidden, 1))
             self.need_interpolate = True
             self.target_len = lookback
         else:
             self.need_interpolate = False
 
-        self.upsample = nn.Sequential(*blok)
+        self.upsample = nn.Sequential(*blocks)
         self.final = nn.Linear(hidden, n_channels)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        """Reconstruct OHLCV dari latent sequence.
+        """Reconstruct OHLCV from the latent sequence.
 
         Args:
-            z: (B, L, H) dari encoder dengan return_sequence=True
+            z: (B, L, H) from the encoder with return_sequence=True
 
         Returns:
-            (B, n_channels, lookback) rekonstruksi OHLCV
+            (B, n_channels, lookback) OHLCV reconstruction
         """
         _, _, _ = z.shape
-        # Proyeksi ke hidden
+        # Project to hidden
         z = self.proj(z)  # (B, L, hidden)
         z = z.permute(0, 2, 1)  # (B, hidden, L)
         z = self.upsample(z)  # (B, hidden, ~lookback)

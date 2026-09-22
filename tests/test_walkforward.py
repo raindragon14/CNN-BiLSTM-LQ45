@@ -1,4 +1,4 @@
-"""Uji lipatan walk-forward; jalankan langsung: python3 tests/test_walkforward.py."""
+"""Walk-forward fold tests; run directly: python3 tests/test_walkforward.py."""
 
 import sys
 from pathlib import Path
@@ -9,7 +9,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lq45.models.walkforward import design_split, make_folds
+from lq45.models.walkforward import design_split, make_folds, make_pretrain_split
 
 SPLIT = {
     "initial_train_years": 2,
@@ -22,46 +22,46 @@ SPLIT = {
 }
 
 
-def uji_jumlah_dan_batas() -> None:
-    lipatan = make_folds(1932, SPLIT)
-    assert len(lipatan) == 65
-    awal = lipatan[0]
-    assert awal.train == (0, 499)  # 504 - purge 5
-    assert awal.validation == (504, 567)
-    assert awal.test == (567, 588)
-    assert awal.banned == []
-    akhir = lipatan[-1]
-    assert akhir.test[1] == 1932  # menutup kalender persis
+def test_count_and_bounds() -> None:
+    folds = make_folds(1932, SPLIT)
+    assert len(folds) == 65
+    first = folds[0]
+    assert first.train == (0, 499)  # 504 - purge 5
+    assert first.validation == (504, 567)
+    assert first.test == (567, 588)
+    assert first.banned == []
+    last = folds[-1]
+    assert last.test[1] == 1932  # covers the calendar exactly
 
 
-def uji_embargo() -> None:
-    lipatan = make_folds(1932, SPLIT)
-    # Test lipatan 0 berakhir di 588; larangan [588, 647) muncul di semua
-    # lipatan berikutnya.
-    for fold in lipatan[1:]:
+def test_embargo() -> None:
+    folds = make_folds(1932, SPLIT)
+    # Fold 0's test ends at 588; the ban [588, 647) shows up in every
+    # following fold.
+    for fold in folds[1:]:
         assert (588, 647) in [tuple(b) for b in fold.banned]
 
 
-def uji_purge_dan_embargo_parameter() -> None:
-    lipatan = make_folds(1932, SPLIT, purge_days=21)
-    assert lipatan[0].train == (0, 483)  # 504 - 21
-    lipatan = make_folds(1932, SPLIT, embargo_days=29)
-    for fold in lipatan[1:]:
+def test_purge_and_embargo_params() -> None:
+    folds = make_folds(1932, SPLIT, purge_days=21)
+    assert folds[0].train == (0, 483)  # 504 - 21
+    folds = make_folds(1932, SPLIT, embargo_days=29)
+    for fold in folds[1:]:
         assert (588, 617) in [tuple(b) for b in fold.banned]
 
 
-def uji_test_menutup_oos() -> None:
-    lipatan = make_folds(1932, SPLIT)
-    tertutup = np.zeros(1932, dtype=bool)
-    for fold in lipatan:
-        a, b = fold.test
-        assert not tertutup[a:b].any()  # test tidak tumpang tindih
-        tertutup[a:b] = True
-    assert tertutup[:567].sum() == 0  # 63 hari pembuka OOS tanpa test
-    assert tertutup[567:].all()  # sisanya tertutup penuh
+def test_test_covers_oos() -> None:
+    folds = make_folds(1932, SPLIT)
+    covered = np.zeros(1932, dtype=bool)
+    for fold in folds:
+        start, end = fold.test
+        assert not covered[start:end].any()  # test folds do not overlap
+        covered[start:end] = True
+    assert covered[:567].sum() == 0  # 63 opening OOS days carry no test
+    assert covered[567:].all()  # the remainder is fully covered
 
 
-def uji_design_split() -> None:
+def test_design_split() -> None:
     dates = pd.date_range("2018-01-01", "2019-12-31", freq="B")
     design = design_split(
         dates, "2018-01-01/2018-12-31", "2019-01-01/2019-12-31", horizon=5
@@ -72,13 +72,22 @@ def uji_design_split() -> None:
     assert design.validation == (int(pos_2019[0]), int(pos_2019[-1]) + 1)
 
 
+def test_pretrain_split() -> None:
+    split = make_pretrain_split(100, 0.1)
+    assert split.train == (0, 90)
+    assert split.validation == (90, 100)
+    edge = make_pretrain_split(10, 0.5)
+    assert edge.train == (0, 5) and edge.validation == (5, 10)
+
+
 def main() -> int:
-    uji_jumlah_dan_batas()
-    uji_embargo()
-    uji_purge_dan_embargo_parameter()
-    uji_test_menutup_oos()
-    uji_design_split()
-    print("test_walkforward.py: 5 uji lolos")
+    test_count_and_bounds()
+    test_embargo()
+    test_purge_and_embargo_params()
+    test_test_covers_oos()
+    test_design_split()
+    test_pretrain_split()
+    print("test_walkforward.py: 6 tests passed")
     return 0
 
 

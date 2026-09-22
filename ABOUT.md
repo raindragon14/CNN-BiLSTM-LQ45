@@ -1,8 +1,8 @@
 # About — NeuralAlpha
 
 > **Portfolio showcase page.** Read this as your LinkedIn "about" section.
-> **Audiens:** HR, recruiters, hiring managers in Singapore.
-> **Bukan untuk:** naskah skripsi (`internal/SKRIPSI.md`), jejak keputusan (`docs/keputusan_desain.md`).
+> **Audience:** HR, recruiters, and hiring managers in Singapore.
+> **Not for:** the thesis manuscript (`internal/SKRIPSI.md`) or the decision log (`docs/keputusan_desain.md`).
 
 ---
 

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Tahap 4: Peringkat Top-K dan Optimasi Mean-Variance.
+"""Stage 4: Top-K ranking and Mean-Variance optimization.
 
-Masukan: `predictions.csv` dari tahap 3 (kolom `role` menandai set uji).
-Keluaran per jalankan (`experiments/<run_id>/`):
-    - `weights.csv`            : bobot rebalancing per tanggal dan konfigurasi
-    - `portfolio_returns.csv`  : ekuitas dan return harian bersih per konfigurasi
-    - `baseline_returns.csv`   : pool 1/N dan IHSG buy-and-hold
-    - `run_info.json`          : rekaman eksekusi untuk audit
+Input: `predictions.csv` from stage 3 (the `role` column marks the test set).
+Outputs per run (`experiments/<run_id>/`):
+    - `weights.csv`            : rebalancing weights per date and configuration
+    - `portfolio_returns.csv`  : equity and daily net return per configuration
+    - `baseline_returns.csv`   : 1/N pool and IHSG buy-and-hold
+    - `run_info.json`          : execution record for auditing
 
-Konfigurasi grid pencarian (lihat `configs/portfolio.yaml`):
-    - k: nilai {5, 7, 10, 3, 15, 20}, L: {120, 60, 252},
-      max_weight: {0.35, 0.25, 0.50, 1.0}, dan mode peringkat
-      ensemble serta per seed. Opsi `--grid utama` untuk eksekusi
-      cepat (k {5, 7, 10}, L 120, max_weight 0.35).
+Grid-search configuration (see `configs/portfolio.yaml`):
+    - k: values {5, 7, 10, 3, 15, 20}, L: {120, 60, 252},
+      max_weight: {0.35, 0.25, 0.50, 1.0}, and the ensemble as well as
+      per-seed ranking modes. The `--grid main` option gives a fast
+      run (k {5, 7, 10}, L 120, max_weight 0.35).
 
-Metodologi:
-    Penyaringan top-k memakai prediksi CNN-BiLSTM. Optimasi
-    Mean-Variance meminimalkan varians dengan kendala target_return
-    rata-rata pred_ens (Chaweewanchon & Chaysiri 2022, Section 3.1).
-    GMV tidak digunakan.
+Methodology:
+    Top-k selection uses the CNN-BiLSTM predictions. Mean-Variance
+    optimization minimizes variance subject to a target return equal
+    to the mean pred_ens (Chaweewanchon & Chaysiri 2022, Section 3.1).
+    GMV is not used.
 
-Jejak keputusan: docs/keputusan_desain.md bagian E dan H.
+Decision log: docs/keputusan_desain.md sections E and H.
 """
 
 from __future__ import annotations
@@ -38,8 +38,8 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lq45.portfolio.backtest import jalankan_backtest
-from lq45.portfolio.ranking import ensemble_prediksi
+from lq45.portfolio.backtest import run_backtest
+from lq45.portfolio.ranking import ensemble_predictions
 from lq45.utils.config import (
     EXPERIMENT_DIR,
     INTERIM_DIR,
@@ -49,258 +49,260 @@ from lq45.utils.config import (
 
 
 def parse_args() -> argparse.Namespace:
-    """Mengurai argumen baris perintah untuk konfigurasi optimasi.
+    """Parse the command-line arguments for the optimization configuration.
 
     Returns:
-        Namespace berisi parameter: jalur predictions, direktori
-        keluaran, cakupan grid, modal awal, dan mode peringkat seed.
+        Namespace with the parameters: predictions path, output directory,
+        grid scope, initial capital, and seed ranking mode.
     """
     parser = argparse.ArgumentParser(
-        description="Peringkat top-k dan optimasi portofolio."
+        description="Top-k ranking and portfolio optimization."
     )
     parser.add_argument(
-        "--predictions", type=Path, required=True, help="predictions.csv tahap 3"
+        "--predictions", type=Path, required=True, help="predictions.csv from stage 3"
     )
-    parser.add_argument("--out", type=Path, default=None, help="direktori keluaran")
+    parser.add_argument("--out", type=Path, default=None, help="output directory")
     parser.add_argument(
         "--grid",
-        choices=["utama", "penuh"],
-        default="penuh",
-        help="cakupan grid (bawaan: penuh)",
+        choices=["main", "full"],
+        default="full",
+        help="grid scope (default: full)",
     )
     parser.add_argument(
-        "--modal",
+        "--capital",
         type=float,
         default=100_000_000.0,
-        help="modal awal rupiah (bawaan: 100 juta)",
+        help="initial capital in rupiah (default: 100 million)",
     )
     parser.add_argument(
         "--seed-mode",
-        choices=["ensemble", "semua"],
-        default="semua",
-        help="peringkat ensemble saja atau ditambah per seed",
+        choices=["ensemble", "all"],
+        default="all",
+        help="rank the ensemble only, or also per seed",
     )
     return parser.parse_args()
 
 
 def git_sha() -> str:
-    """Mengambil hash commit pendek (7 karakter) dari repository akar.
+    """Return the short (7-character) commit hash of the repository root.
 
     Returns:
-        String hash SHA pendek, atau `"unknown"` jika Git tidak tersedia.
+        Short SHA hash string, or `"unknown"` if Git is unavailable.
     """
     try:
-        hasil = subprocess.run(
+        result = subprocess.run(
             ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
         )
-        return hasil.stdout.strip()
+        return result.stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 
-def muat_harga() -> pd.DataFrame:
-    """Memuat harga penutupan adjusted (Adj Close) seluruh saham LQ45.
+def load_prices() -> pd.DataFrame:
+    """Load the adjusted closing prices (Adj Close) of every LQ45 stock.
 
-    Setiap file CSV di direktori interim mewakili satu ticker.
-    Indeks berupa tanggal, kolom berupa ticker dengan akhiran `.JK`.
+    Each CSV file in the interim directory represents one ticker.
+    The index is dates and the columns are tickers with the `.JK` suffix.
 
     Returns:
-        DataFrame berisi harga harian yang diurutkan berdasarkan tanggal.
+        DataFrame with daily prices sorted by date.
     """
-    bingkai: dict[str, pd.Series] = {}
-    for berkas in sorted((INTERIM_DIR / "prices_clean").glob("*.csv")):
-        ticker = berkas.stem + ".JK"
-        frame = pd.read_csv(berkas, parse_dates=["Date"]).set_index("Date")
-        bingkai[ticker] = frame["Adj Close"]
-    harga = pd.DataFrame(bingkai).sort_index()
-    harga.index = pd.to_datetime(harga.index)
-    return harga
+    frames: dict[str, pd.Series] = {}
+    for csv_path in sorted((INTERIM_DIR / "prices_clean").glob("*.csv")):
+        ticker = csv_path.stem + ".JK"
+        frame = pd.read_csv(csv_path, parse_dates=["Date"]).set_index("Date")
+        frames[ticker] = frame["Adj Close"]
+    prices = pd.DataFrame(frames).sort_index()
+    prices.index = pd.to_datetime(prices.index)
+    return prices
 
 
-def kerangka_prediksi(path: Path) -> pd.DataFrame:
-    """Memuat hasil prediksi tahap 3 dan menyaring baris set uji.
+def prediction_frame(path: Path) -> pd.DataFrame:
+    """Load the stage-3 prediction results and filter the test-set rows.
 
-    Mengonversi kolom `date` ke string ISO 8601 dan memfilter hanya
-    baris dengan `role == "test"` untuk evaluasi out-of-sample.
+    Convert the `date` column to ISO 8601 strings and keep only rows with
+    `role == "test"` for out-of-sample evaluation.
 
     Args:
-        path: Jalur ke file `predictions.csv`.
+        path: Path to the `predictions.csv` file.
 
     Returns:
-        DataFrame berisi data uji yang telah direset index-nya.
+        DataFrame with the test data and its index reset.
     """
     frame = pd.read_csv(path, parse_dates=["date"])
     frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
     return frame[frame["role"] == "test"].reset_index(drop=True)
 
 
-def bingkai_peringkat(frame: pd.DataFrame, mode_seed: str) -> dict[str, pd.DataFrame]:
-    """Membangun bingkai prediksi per mode ensemble dan per seed.
+def ranking_frame(frame: pd.DataFrame, seed_mode: str) -> dict[str, pd.DataFrame]:
+    """Build the prediction frames per ensemble mode and per seed.
 
-    Setiap mode dipetakan ke DataFrame dengan kolom `date`, `ticker`,
-    dan `pred_ens`. Mode `ensemble` merata-ratakan seluruh seed;
-    mode seed individual menghasilkan satu DataFrame untuk pelaporan
-    sebaran prediksi.
+    Each mode maps to a DataFrame with the columns `date`, `ticker`, and
+    `pred_ens`. The `ensemble` mode averages all seeds; the individual-seed
+    mode produces one DataFrame per seed for reporting the prediction spread.
 
     Args:
-        frame: DataFrame hasil `kerangka_prediksi`.
-        mode_seed: `"ensemble"` untuk rata-rata, `"semua"` untuk per seed.
+        frame: DataFrame produced by `prediction_frame`.
+        seed_mode: `"ensemble"` averages all seeds; any other value keeps
+            one frame per seed.
 
     Returns:
-        Kamus yang memetakan nama mode ke DataFrame peringkat.
+        Dictionary mapping the mode name to a ranking DataFrame.
     """
-    keluar: dict[str, pd.DataFrame] = {}
-    keluar["ensemble"] = ensemble_prediksi(frame)
-    if mode_seed == "semua":
+    ranking_frames: dict[str, pd.DataFrame] = {}
+    ranking_frames["ensemble"] = ensemble_predictions(frame)
+    if seed_mode == "all":
         for seed in sorted(frame["seed"].unique().tolist()):
-            potong = frame[frame["seed"] == seed][["date", "ticker", "pred_raw"]]
-            keluar[f"seed{seed}"] = potong.rename(columns={"pred_raw": "pred_ens"})
-    return keluar
+            subset = frame[frame["seed"] == seed][["date", "ticker", "pred_raw"]]
+            ranking_frames[f"seed{seed}"] = subset.rename(
+                columns={"pred_raw": "pred_ens"}
+            )
+    return ranking_frames
 
 
-def garis_dasar(
-    harga: pd.DataFrame, tanggal_oos: list[str], modal: float
+def baselines(
+    prices: pd.DataFrame, oos_dates: list[str], capital: float
 ) -> pd.DataFrame:
-    """Menghitung imbal hasil harian pembanding 1/N pool penuh dan IHSG.
+    """Compute the daily returns of the full-pool 1/N and IHSG benchmarks.
 
-    1/N membagi modal merata ke seluruh ticker yang tersedia pada tiap
-    tanggal. IHSG dinormalkan ke modal awal pada tanggal OOS pertama.
+    1/N splits the capital equally across every available ticker on each
+    date. IHSG is normalized to the initial capital on the first OOS date.
 
     Args:
-        harga: DataFrame harga penutupan harian.
-        tanggal_oos: Daftar tanggal out-of-sample.
-        modal: Modal awal dalam Rupiah.
+        prices: Daily closing-price DataFrame.
+        oos_dates: List of out-of-sample dates.
+        capital: Initial capital in rupiah.
 
     Returns:
-        DataFrame berisi ekuitas dan return harian kedua pembanding.
+        DataFrame with the equity and daily returns of both benchmarks.
     """
-    tanggal = pd.to_datetime(sorted(set(tanggal_oos)))
-    harga_oos = harga[harga.index.isin(tanggal)].sort_index()
-    imbal = harga_oos.pct_change().fillna(0.0)
-    ret_1n = imbal.mean(axis=1)
-    ekuitas_1n = (1.0 + ret_1n).cumprod() * modal
+    dates = pd.to_datetime(sorted(set(oos_dates)))
+    oos_prices = prices[prices.index.isin(dates)].sort_index()
+    returns = oos_prices.pct_change().fillna(0.0)
+    ret_1n = returns.mean(axis=1)
+    equity_1n = (1.0 + ret_1n).cumprod() * capital
     ihsg = pd.read_csv(
         ROOT / "data" / "raw" / "benchmark_ihsg.csv", parse_dates=["Date"]
     ).set_index("Date")
     ihsg.index = pd.to_datetime(ihsg.index)
-    ihsg_oos = ihsg[ihsg.index.isin(tanggal)].sort_index()["Adj Close"]
-    ekuitas_ihsg = ihsg_oos / ihsg_oos.iloc[0] * modal
-    gabung = pd.DataFrame({"eq_1n_full": ekuitas_1n, "eq_ihsg": ekuitas_ihsg})
-    gabung.index.name = "date"
-    gabung = gabung.reset_index()
-    gabung["ret_1n_full"] = gabung["eq_1n_full"].pct_change().fillna(0.0)
-    gabung["ret_ihsg"] = gabung["eq_ihsg"].pct_change().fillna(0.0)
-    return gabung
+    ihsg_oos = ihsg[ihsg.index.isin(dates)].sort_index()["Adj Close"]
+    equity_ihsg = ihsg_oos / ihsg_oos.iloc[0] * capital
+    merged = pd.DataFrame({"eq_1n_full": equity_1n, "eq_ihsg": equity_ihsg})
+    merged.index.name = "date"
+    merged = merged.reset_index()
+    merged["ret_1n_full"] = merged["eq_1n_full"].pct_change().fillna(0.0)
+    merged["ret_ihsg"] = merged["eq_ihsg"].pct_change().fillna(0.0)
+    return merged
 
 
 def main() -> int:
-    """Menjalankan grid pencarian optimasi portofolio dan menulis hasilnya.
+    """Run the portfolio-optimization grid search and write its results.
 
-    Alur kerja:
-        1. Memuat konfigurasi, harga, dan prediksi.
-        2. Menyusun kombinasi grid (k, estimator, lookback, max_weight).
-        3. Menjalankan backtest per kombinasi dengan menyimpan hasil
-           ke CSV secara append untuk ketahanan terhadap kegagalan.
-        4. Menghitung baseline 1/N dan IHSG.
-        5. Menulis metrik eksekusi ke `run_info.json`.
+    Workflow:
+        1. Load the configuration, prices, and predictions.
+        2. Build the grid combinations (k, estimator, lookback, max_weight).
+        3. Run the backtest per combination, appending results to CSV as
+           it goes for resilience against failures.
+        4. Compute the 1/N and IHSG baselines.
+        5. Write the execution metrics to `run_info.json`.
 
     Returns:
-        Kode keluar 0 jika berhasil.
+        Exit code 0 on success.
     """
     args = parse_args()
     port_cfg = load_config("portfolio")
     data_cfg = load_config("data")
     opt_cfg = port_cfg["optimization"]
-    mulai = time.time()
-    stempel = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    run_dir = args.out or (EXPERIMENT_DIR / f"optimize_{stempel}")
+    start = time.time()
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    run_dir = args.out or (EXPERIMENT_DIR / f"optimize_{stamp}")
     ensure_dirs(run_dir)
-    if args.grid == "utama":
-        daftar_k = list(port_cfg["selection"]["k_values"])
-        daftar_l = [int(port_cfg["covariance"]["lookback_days"])]
-        daftar_maks = [float(port_cfg["constraints"]["max_weight"])]
+    if args.grid == "main":
+        k_list = list(port_cfg["selection"]["k_values"])
+        l_list = [int(port_cfg["covariance"]["lookback_days"])]
+        maxw_list = [float(port_cfg["constraints"]["max_weight"])]
     else:
-        daftar_k = list(port_cfg["selection"]["k_values"]) + list(
+        k_list = list(port_cfg["selection"]["k_values"]) + list(
             port_cfg["selection"]["k_sensitivity"]
         )
-        daftar_l = [int(port_cfg["covariance"]["lookback_days"])] + list(
+        l_list = [int(port_cfg["covariance"]["lookback_days"])] + list(
             port_cfg["covariance"]["lookback_sensitivity"]
         )
-        daftar_maks = [float(port_cfg["constraints"]["max_weight"])] + [
+        maxw_list = [float(port_cfg["constraints"]["max_weight"])] + [
             float(x) for x in port_cfg["constraints"]["max_weight_sensitivity"]
         ]
     estimators = list(port_cfg["covariance"]["estimators"])
     optimizer_types = opt_cfg.get("types", ["target_return"])
-    biaya = data_cfg["costs"]
-    frame = kerangka_prediksi(args.predictions)
-    harga = muat_harga()
-    peringkat = bingkai_peringkat(frame, args.seed_mode)
-    tanggal_oos = sorted(frame["date"].unique().tolist())
+    costs = data_cfg["costs"]
+    frame = prediction_frame(args.predictions)
+    prices = load_prices()
+    ranking = ranking_frame(frame, args.seed_mode)
+    oos_dates = sorted(frame["date"].unique().tolist())
     total = (
-        len(daftar_k)
+        len(k_list)
         * len(estimators)
-        * len(daftar_l)
-        * len(daftar_maks)
-        * len(peringkat)
+        * len(l_list)
+        * len(maxw_list)
+        * len(ranking)
         * len(optimizer_types)
     )
-    kerja = 0
+    progress = 0
     for optimizer_type in optimizer_types:
-        for nama_mode, peringkat_df in peringkat.items():
-            for k in daftar_k:
+        for mode_name, ranking_df in ranking.items():
+            for k in k_list:
                 for est in estimators:
-                    for panjang in daftar_l:
-                        for maks in daftar_maks:
-                            kerja += 1
-                            bobot, nilai = jalankan_backtest(
-                                peringkat_df,
-                                harga,
+                    for length in l_list:
+                        for maxw in maxw_list:
+                            progress += 1
+                            weights, value = run_backtest(
+                                ranking_df,
+                                prices,
                                 int(k),
                                 est,
-                                int(panjang),
-                                float(maks),
-                                modal=args.modal,
-                                fee_beli=float(biaya["buy_fee"]),
-                                fee_jual=float(biaya["sell_fee"]),
-                                lot=int(biaya["lot_size"]),
+                                int(length),
+                                float(maxw),
+                                capital=args.capital,
+                                buy_fee=float(costs["buy_fee"]),
+                                sell_fee=float(costs["sell_fee"]),
+                                lot=int(costs["lot_size"]),
                                 ridge_epsilon=float(
                                     port_cfg["covariance"]["ridge_epsilon"]
                                 ),
                                 optimizer_type=optimizer_type,
                             )
-                            bobot["seed_mode"] = nama_mode
-                            nilai["k"] = int(k)
-                            nilai["estimator"] = est
-                            nilai["lookback"] = int(panjang)
-                            nilai["max_weight"] = float(maks)
-                            nilai["seed_mode"] = nama_mode
-                            # Menyimpan hasil per iterasi secara append
-                            # untuk mencegah kehilangan data jika terjadi
-                            # kegagalan proses di tengah jalan.
+                            weights["seed_mode"] = mode_name
+                            value["k"] = int(k)
+                            value["estimator"] = est
+                            value["lookback"] = int(length)
+                            value["max_weight"] = float(maxw)
+                            value["seed_mode"] = mode_name
+                            # Append the results of each iteration to
+                            # prevent data loss if the process fails
+                            # partway through.
                             weights_path = run_dir / "weights.csv"
                             returns_path = run_dir / "portfolio_returns.csv"
-                            bobot.to_csv(
+                            weights.to_csv(
                                 weights_path,
                                 mode="a",
                                 header=not weights_path.exists(),
                                 index=False,
                             )
-                            nilai.to_csv(
+                            value.to_csv(
                                 returns_path,
                                 mode="a",
                                 header=not returns_path.exists(),
                                 index=False,
                             )
-                            if kerja % 100 == 0 or kerja == total:
+                            if progress % 100 == 0 or progress == total:
                                 print(
-                                    f"[{kerja}/{total}] {optimizer_type} {nama_mode} k={k} {est} "
-                                    f"L={panjang} maxw={maks}",
+                                    f"[{progress}/{total}] {optimizer_type} {mode_name} "
+                                    f"k={k} {est} L={length} maxw={maxw}",
                                     flush=True,
                                 )
-    garis_dasar(harga, tanggal_oos, args.modal).to_csv(
+    baselines(prices, oos_dates, args.capital).to_csv(
         run_dir / "baseline_returns.csv", index=False
     )
     info = {
@@ -308,18 +310,18 @@ def main() -> int:
         "git_sha": git_sha(),
         "predictions": str(args.predictions),
         "grid": args.grid,
-        "k_values": daftar_k,
+        "k_values": k_list,
         "estimators": estimators,
         "optimizer_types": optimizer_types,
-        "lookbacks": daftar_l,
-        "max_weights": daftar_maks,
-        "seed_modes": sorted(peringkat),
-        "modal": args.modal,
+        "lookbacks": l_list,
+        "max_weights": maxw_list,
+        "seed_modes": sorted(ranking),
+        "capital": args.capital,
         "n_configs": total,
-        "wall_sec": round(time.time() - mulai, 1),
+        "wall_sec": round(time.time() - start, 1),
     }
     (run_dir / "run_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
-    print(f"selesai: {total} konfigurasi -> {run_dir}", flush=True)
+    print(f"done: {total} configurations -> {run_dir}", flush=True)
     return 0
 
 

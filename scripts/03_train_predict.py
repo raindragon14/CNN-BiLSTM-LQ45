@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
-"""Tahap 3: latih CNN-BiLSTM dan tulis prediksi walk-forward.
+"""Stage 3: train CNN-BiLSTM and write walk-forward predictions.
 
-Mode:
-- `dry-run`           : cetak tabel lipatan tanpa melatih.
-- `smoke`             : 2 lipatan, 1 seed, 3 epoch (verifikasi pipa).
-- `calibrate`         : ukur detik per epoch pada lipatan terkecil dan terbesar.
-- `tune`              : grid dan sensitivitas periode desain, lalu bekukan
-                         hyperparameter terbaik ke `best_hyperparams.yaml`.
-- `pretrain`          : Masked Autoencoder pre-training pada data OHLCV+makro.
-- `walk-forward`      : prediksi OOS 2020-2025 untuk tahap 4 (supervised only).
-- `walk-forward-pretrain`: pre-train -> fine-tune per lipatan (two-stage).
+Modes:
+- `dry-run`           : print the fold table without training.
+- `smoke`             : 2 folds, 1 seed, 3 epochs (pipeline check).
+- `calibrate`         : measure seconds per epoch on the smallest and largest fold.
+- `tune`              : grid and design-period sensitivity, then freeze the
+                        best hyperparameters to `best_hyperparams.yaml`.
+- `pretrain`          : Masked Autoencoder pre-training on OHLCV+macro data.
+- `walk-forward`      : OOS 2020-2025 predictions for stage 4 (supervised only).
+- `walk-forward-pretrain`: pre-train -> fine-tune per fold (two-stage).
 
-Keluaran per run (`experiments/<run_id>/`):
-- `run_info.json`      : cuplikan konfigurasi, sha git, versi pustaka.
-- `fold_metrics.csv`   : loss, epoch terbaik, detik per epoch per pelatihan.
-- `predictions.csv`    : satu baris per (tanggal, saham, seed); kolom
-                          `role` menandai test atau validation.
-- `predictions_parts/` : bagian mentah sebelum penghapusan duplikat
-                          (untuk audit).
-- `checkpoints/`       : state_dict per (lipatan, seed), opsional.
-- `log.txt`            : kemajuan dengan stempel waktu.
-- `pretrained/`        : encoder/decoder pre-trained (mode pretrain).
+Output per run (`experiments/<run_id>/`):
+- `run_info.json`      : configuration snapshot, git sha, library versions.
+- `fold_metrics.csv`   : loss, best epoch, seconds per epoch per training run.
+- `predictions.csv`    : one row per (date, stock, seed); the `role` column
+                         marks test or validation.
+- `predictions_parts/` : raw parts before deduplication (for audit).
+- `checkpoints/`       : state_dict per (fold, seed), optional.
+- `log.txt`            : progress with timestamps.
+- `pretrained/`        : pre-trained encoder/decoder (pretrain mode).
 
-Aturan penghapusan duplikat prediksi: jendela test menutup seluruh OOS
-tanpa tumpang tindih, sedangkan jendela validasi lipatan berikutnya
-tumpang tindih dengan test lipatan sebelumnya (langkah 21 < test 21).
-Setiap (tanggal, saham, seed) dipertahankan dari lipatan terkecil yang
-memuat tanggal itu, sehingga tepat satu baris per (tanggal, saham, seed);
-peran terekam di kolom `role` dan evaluasi tahap 5 menyaring `role=test`.
+Prediction deduplication rule: the test windows cover the whole OOS period
+without overlap, whereas the validation window of the following fold
+overlaps with the test window of the previous fold (step 21 < test 21).
+Each (date, stock, seed) is kept from the smallest fold that contains that
+date, so there is exactly one row per (date, stock, seed); the recorded
+role lives in the `role` column and the stage-5 evaluation filters
+`role=test`.
 
-Spesifikasi: configs/model.yaml, configs/split.yaml, configs/universe.yaml.
-Jejak keputusan: docs/keputusan_desain.md.
+Specification: configs/model.yaml, configs/split.yaml, configs/universe.yaml.
+Decision log: docs/keputusan_desain.md.
 """
 
 from __future__ import annotations
@@ -90,13 +90,13 @@ from lq45.utils.config import (
     load_config,
 )
 
-SEEDS_BAWAAN = "0,1,2,3,4"
+DEFAULT_SEEDS = "0,1,2,3,4"
 
 
 def parse_args() -> argparse.Namespace:
-    """Baca argumen baris perintah."""
+    """Read the command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Latih CNN-BiLSTM dan tulis prediksi walk-forward."
+        description="Train CNN-BiLSTM and write walk-forward predictions."
     )
     parser.add_argument(
         "--mode",
@@ -110,111 +110,116 @@ def parse_args() -> argparse.Namespace:
             "dry-run",
         ],
         default="walk-forward",
-        help="mode kerja (bawaan: walk-forward)",
+        help="operating mode (default: walk-forward)",
     )
     parser.add_argument(
         "--seeds",
         default=None,
-        help=f"daftar seed dipisahkan dengan koma (bawaan: {SEEDS_BAWAAN})",
+        help=f"comma-separated list of seeds (default: {DEFAULT_SEEDS})",
     )
-    parser.add_argument("--jobs", type=int, default=1, help="jumlah proses paralel")
+    parser.add_argument(
+        "--jobs", type=int, default=1, help="number of parallel processes"
+    )
     parser.add_argument(
         "--threads",
         type=int,
         default=0,
-        help="thread torch per proses (0 = otomatis)",
+        help="torch threads per process (0 = automatic)",
     )
+    parser.add_argument("--folds", type=int, default=0, help="limit folds (0 = all)")
     parser.add_argument(
-        "--folds", type=int, default=0, help="batasi lipatan (0 = semua)"
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=0, help="batasi epoch (0 = config)"
+        "--epochs", type=int, default=0, help="limit epochs (0 = config)"
     )
     parser.add_argument(
         "--use-tuning",
         type=Path,
         default=None,
-        help="direktori hasil tuning untuk membekukan hyperparameter",
+        help="tuning result directory used to freeze the hyperparameters",
     )
     parser.add_argument(
         "--no-checkpoints",
         action="store_true",
-        help="tanpa menyimpan state_dict",
+        help="do not save state_dict",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="lewati (lipatan, seed) yang selesai untuk melanjutkan "
-        "eksekusi terputus",
+        help="skip completed (fold, seed) pairs to resume an interrupted " "execution",
     )
-    parser.add_argument("--out", type=Path, default=None, help="direktori keluaran")
+    parser.add_argument("--out", type=Path, default=None, help="output directory")
+    parser.add_argument(
+        "--pretrained-dir",
+        type=Path,
+        default=None,
+        help="directory holding encoder_seed{N}.pt (walk-forward-pretrain mode)",
+    )
     return parser.parse_args()
 
 
-def seed_list(teks: str | None) -> list[int]:
-    """Ubah daftar seed teks menjadi bilangan."""
-    return [int(x) for x in (teks or SEEDS_BAWAAN).split(",") if x.strip()]
+def parse_seeds(text: str | None) -> list[int]:
+    """Turn a textual seed list into numbers."""
+    return [int(x) for x in (text or DEFAULT_SEEDS).split(",") if x.strip()]
 
 
-def nama_run(mode: str) -> Path:
-    """Nama direktori hasil dari stempel waktu UTC."""
-    stempel = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    return EXPERIMENT_DIR / f"{mode}_{stempel}"
+def new_run_dir(mode: str) -> Path:
+    """Result directory name derived from the UTC timestamp."""
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return EXPERIMENT_DIR / f"{mode}_{timestamp}"
 
 
 def git_sha() -> str:
-    """Hash pendek commit terakhir; `unknown` bila bukan repositori git."""
+    """Short hash of the last commit; `unknown` if not a git repository."""
     try:
-        hasil = subprocess.run(
+        result = subprocess.run(
             ["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"],
             capture_output=True,
             text=True,
             check=True,
         )
-        return hasil.stdout.strip()
+        return result.stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
 
 
-def log(run_dir: Path, pesan: str) -> None:
-    """Tulis satu baris log ke layar dan `log.txt`."""
-    baris = f"[{datetime.now(UTC).isoformat()}] {pesan}"
-    print(baris, flush=True)
-    with (run_dir / "log.txt").open("a", encoding="utf-8") as pegangan:
-        pegangan.write(baris + "\n")
+def log(run_dir: Path, message: str) -> None:
+    """Write a single log line to the screen and to `log.txt`."""
+    line = f"[{datetime.now(UTC).isoformat()}] {message}"
+    print(line, flush=True)
+    with (run_dir / "log.txt").open("a", encoding="utf-8") as handle:
+        handle.write(line + "\n")
 
 
-def tulis_json(path: Path, data: dict[str, Any]) -> None:
-    """Tulis JSON secara atomik (berkas sementara lalu rename)."""
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write JSON atomically (temporary file then rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    sementara = path.with_suffix(".tmp")
-    with sementara.open("w", encoding="utf-8") as pegangan:
-        json.dump(data, pegangan, indent=2, default=str)
-    sementara.replace(path)
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, default=str)
+    temporary.replace(path)
 
 
-def muat_tuning(path: Path | None) -> dict[str, Any]:
-    """Baca `best_hyperparams.yaml` dari hasil tuning; kosong bila tak ada."""
+def load_tuning(path: Path | None) -> dict[str, Any]:
+    """Read `best_hyperparams.yaml` from the tuning results; empty if absent."""
     if path is None:
         return {}
-    berkas = path / "best_hyperparams.yaml"
-    if not berkas.exists():
-        raise FileNotFoundError(f"berkas tuning tidak ditemukan: {berkas}")
-    return yaml.safe_load(berkas.read_text(encoding="utf-8"))
+    tuning_file = path / "best_hyperparams.yaml"
+    if not tuning_file.exists():
+        raise FileNotFoundError(f"tuning file not found: {tuning_file}")
+    return yaml.safe_load(tuning_file.read_text(encoding="utf-8"))
 
 
-def model_kwargs(model_cfg: dict[str, Any], hp: dict[str, Any]) -> dict:
-    """Susun parameter konstruktor CNNBiLSTM dari config.
+def model_kwargs(model_cfg: dict[str, Any], tuned: dict[str, Any]) -> dict:
+    """Build the CNNBiLSTM constructor parameters from the config.
 
-    Kunci yang ada di `hp` menggantikan nilai config; `hp` berasal dari
-    `best_hyperparams.yaml` hasil penyetelan periode desain.
+    Keys present in `tuned` override the config values; `tuned` comes from
+    `best_hyperparams.yaml` produced by the design-period tuning.
     """
     return {
         "n_features": len(FEATURE_COLUMNS),
         "filters": list(model_cfg["cnn"]["filters"]),
         "kernel_size": int(model_cfg["cnn"]["kernel_size"]),
-        "pooling": int(hp.get("pooling.size", model_cfg["cnn"]["pooling"]["size"])),
-        "units": int(hp.get("bilstm.units", model_cfg["bilstm"]["units"])),
+        "pooling": int(tuned.get("pooling.size", model_cfg["cnn"]["pooling"]["size"])),
+        "units": int(tuned.get("bilstm.units", model_cfg["bilstm"]["units"])),
         "layers": int(model_cfg["bilstm"]["layers"]),
         "batchnorm": bool(model_cfg["cnn"]["batchnorm"]),
         "dropout_cnn": float(model_cfg["dropout"]["cnn"]),
@@ -227,17 +232,17 @@ def model_kwargs(model_cfg: dict[str, Any], hp: dict[str, Any]) -> dict:
 
 def train_kwargs(
     model_cfg: dict[str, Any],
-    hp: dict[str, Any],
+    tuned: dict[str, Any],
     epochs: int = 0,
 ) -> dict:
-    """Susun parameter pelatihan dari config; `hp` menggantikan nilainya."""
+    """Build the training parameters from the config; `tuned` overrides them."""
     return {
-        "batch_size": int(hp.get("batch_size", model_cfg["batch_size"])),
+        "batch_size": int(tuned.get("batch_size", model_cfg["batch_size"])),
         "epochs": epochs or int(model_cfg["epochs"]),
         "patience": int(model_cfg["early_stopping"]["patience"]),
         "lr": float(model_cfg["optimizer"]["lr"]),
         "weight_decay": float(
-            hp.get(
+            tuned.get(
                 "optimizer.weight_decay",
                 model_cfg["optimizer"]["weight_decay"],
             )
@@ -245,143 +250,143 @@ def train_kwargs(
     }
 
 
-def skala_panel(panel: PanelData, rentang_latih: tuple[int, int]) -> tuple[
+def scale_panel(panel: PanelData, train_span: tuple[int, int]) -> tuple[
     dict[str, np.ndarray],
     dict[str, np.ndarray],
     RobustPreprocessor,
     RobustPreprocessor,
 ]:
-    """Winsorize + min-max di-fit pada baris latih, dipakai ke seluruh panel.
+    """Winsorize + min-max fitted on the training rows, applied to the whole panel.
 
-    Praproses mengikuti Sebastian & Tantia (2024) bagian praproses data.
-    Parameter dihitung dari baris tanggal `rentang_latih` seluruh saham
-    digabung, selaras dengan model bersama; transformasi bekerja per
-    elemen, sehingga menerapkannya sebelum pembentukan jendela sama
-    hasilnya dengan menerapkannya pada tiap jendela. Fit hanya pada data
-    latih mencegah kebocoran informasi.
+    Preprocessing follows Sebastian & Tantia (2024), data preprocessing
+    section. The parameters are computed from the date rows of `train_span`
+    pooled across all stocks, consistent with the shared model; the
+    transform works element-wise, so applying it before window construction
+    gives the same result as applying it to each window. Fitting on the
+    training data only prevents information leakage.
     """
-    a, b = rentang_latih
-    latih_fitur = np.concatenate(
+    a, b = train_span
+    train_features = np.concatenate(
         [panel.features[t][a:b] for t in panel.tickers], axis=0
     )
-    latih_target = np.concatenate([panel.target[t][a:b] for t in panel.tickers], axis=0)
-    prep_fitur = RobustPreprocessor().fit(
-        pd.DataFrame(latih_fitur, columns=FEATURE_COLUMNS)
+    train_target = np.concatenate([panel.target[t][a:b] for t in panel.tickers], axis=0)
+    feature_prep = RobustPreprocessor().fit(
+        pd.DataFrame(train_features, columns=FEATURE_COLUMNS)
     )
-    prep_target = RobustPreprocessor().fit(pd.DataFrame({"target": latih_target}))
+    target_prep = RobustPreprocessor().fit(pd.DataFrame({"target": train_target}))
 
-    fitur = {
-        t: prep_fitur.transform(
+    features = {
+        t: feature_prep.transform(
             pd.DataFrame(panel.features[t], columns=FEATURE_COLUMNS)
         ).to_numpy(dtype=np.float32)
         for t in panel.tickers
     }
     target = {
-        t: prep_target.transform(pd.DataFrame({"target": panel.target[t]}))[
+        t: target_prep.transform(pd.DataFrame({"target": panel.target[t]}))[
             "target"
         ].to_numpy(dtype=np.float32)
         for t in panel.tickers
     }
-    return fitur, target, prep_fitur, prep_target
+    return features, target, feature_prep, target_prep
 
 
-def jendela_pool(
+def window_pool(
     panel: PanelData,
-    fitur: dict[str, np.ndarray],
+    features: dict[str, np.ndarray],
     target: dict[str, np.ndarray],
-    rentang: tuple[int, int],
+    span: tuple[int, int],
     banned: list[tuple[int, int]],
     lookback: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Gabungkan jendela seluruh saham untuk rentang tanggal tertentu."""
-    daftar_x: list[np.ndarray] = []
-    daftar_y: list[np.ndarray] = []
+    """Concatenate the windows of all stocks for a given date span."""
+    x_list: list[np.ndarray] = []
+    y_list: list[np.ndarray] = []
     for ticker in panel.tickers:
         x, y, _ = build_windows(
-            fitur[ticker],
+            features[ticker],
             target[ticker],
             lookback,
-            rentang[0],
-            rentang[1],
+            span[0],
+            span[1],
             banned,
         )
         if len(y):
-            daftar_x.append(x)
-            daftar_y.append(y)
-    if not daftar_x:
-        kosong = np.empty((0, len(FEATURE_COLUMNS), lookback), dtype=np.float32)
-        return kosong, np.empty(0, dtype=np.float32)
-    return np.concatenate(daftar_x), np.concatenate(daftar_y)
+            x_list.append(x)
+            y_list.append(y)
+    if not x_list:
+        empty = np.empty((0, len(FEATURE_COLUMNS), lookback), dtype=np.float32)
+        return empty, np.empty(0, dtype=np.float32)
+    return np.concatenate(x_list), np.concatenate(y_list)
 
 
-def jalankan_fit(
+def run_fit(
     panel: PanelData,
     fold: Fold,
     lookback: int,
-    mk: dict[str, Any],
-    tk: dict[str, Any],
+    model_kw: dict[str, Any],
+    train_kw: dict[str, Any],
     seed: int,
     device: torch.device,
     run_dir: Path,
-    simpan_checkpoint: bool,
+    save_checkpoint: bool,
 ) -> dict[str, Any]:
-    """Latih satu (lipatan, seed) lalu tulis bagian prediksi dan metrik."""
-    mulai = time.time()
-    fitur, target, _, prep_target = skala_panel(panel, fold.train)
-    x_train, y_train = jendela_pool(
-        panel, fitur, target, fold.train, fold.banned, lookback
+    """Train one (fold, seed) then write the prediction part and metrics."""
+    start = time.time()
+    features, target, _, target_prep = scale_panel(panel, fold.train)
+    x_train, y_train = window_pool(
+        panel, features, target, fold.train, fold.banned, lookback
     )
-    x_val, y_val = jendela_pool(panel, fitur, target, fold.validation, [], lookback)
-    x_test, y_test = jendela_pool(panel, fitur, target, fold.test, [], lookback)
+    x_val, y_val = window_pool(panel, features, target, fold.validation, [], lookback)
+    x_test, y_test = window_pool(panel, features, target, fold.test, [], lookback)
 
-    model = build_model(mk, seed)
-    hasil = train_model(
+    model = build_model(model_kw, seed)
+    result = train_model(
         model,
         (x_train, y_train),
         (x_val, y_val),
-        tk["batch_size"],
-        tk["epochs"],
-        tk["patience"],
-        tk["lr"],
-        tk["weight_decay"],
+        train_kw["batch_size"],
+        train_kw["epochs"],
+        train_kw["patience"],
+        train_kw["lr"],
+        train_kw["weight_decay"],
         seed,
         device,
     )
 
-    pred_test = predict(model, x_test, tk["batch_size"], device)
+    pred_test = predict(model, x_test, train_kw["batch_size"], device)
     test_loss = float(np.mean((pred_test - y_test) ** 2))
 
-    baris: list[dict[str, Any]] = []
-    for rentang, peran in (
+    rows: list[dict[str, Any]] = []
+    for span, role in (
         (fold.validation, "validation"),
         (fold.test, "test"),
     ):
         for ticker in panel.tickers:
             x, y, idx = build_windows(
-                fitur[ticker],
+                features[ticker],
                 target[ticker],
                 lookback,
-                rentang[0],
-                rentang[1],
+                span[0],
+                span[1],
                 [],
             )
             if len(y) == 0:
                 continue
-            pred = predict(model, x, tk["batch_size"], device)
-            pred_raw = prep_target.inverse_transform(pd.DataFrame({"target": pred}))[
+            pred = predict(model, x, train_kw["batch_size"], device)
+            pred_raw = target_prep.inverse_transform(pd.DataFrame({"target": pred}))[
                 "target"
             ].to_numpy()
-            y_raw = prep_target.inverse_transform(pd.DataFrame({"target": y}))[
+            y_raw = target_prep.inverse_transform(pd.DataFrame({"target": y}))[
                 "target"
             ].to_numpy()
-            for j, posisi in enumerate(idx):
-                baris.append(
+            for j, position in enumerate(idx):
+                rows.append(
                     {
                         "fold": fold.id,
                         "seed": seed,
-                        "date": panel.dates[posisi].date().isoformat(),
+                        "date": panel.dates[position].date().isoformat(),
                         "ticker": ticker,
-                        "role": peran,
+                        "role": role,
                         "pred_scaled": float(pred[j]),
                         "true_scaled": float(y[j]),
                         "pred_raw": float(pred_raw[j]),
@@ -389,8 +394,8 @@ def jalankan_fit(
                     }
                 )
 
-    bagian = pd.DataFrame(
-        baris,
+    part = pd.DataFrame(
+        rows,
         columns=[
             "fold",
             "seed",
@@ -403,158 +408,156 @@ def jalankan_fit(
             "true_raw",
         ],
     )
-    bagian.to_csv(
+    part.to_csv(
         run_dir / "predictions_parts" / f"{fold.id:03d}_{seed}.csv",
         index=False,
     )
-    if simpan_checkpoint:
+    if save_checkpoint:
         torch.save(
-            hasil.state_dict,
+            result.state_dict,
             run_dir / "checkpoints" / f"{fold.id:03d}_{seed}.pt",
         )
 
-    metrik = {
+    metrics = {
         "fold": fold.id,
         "seed": seed,
-        "train_loss": hasil.history[-1]["train_loss"],
-        "val_loss": hasil.best_val_loss,
+        "train_loss": result.history[-1]["train_loss"],
+        "val_loss": result.best_val_loss,
         "test_loss": test_loss,
-        "best_epoch": hasil.best_epoch,
-        "stopped_early": hasil.stopped_early,
+        "best_epoch": result.best_epoch,
+        "stopped_early": result.stopped_early,
         "n_train": len(y_train),
         "n_val": len(y_val),
         "n_test": len(y_test),
-        "wall_sec": round(time.time() - mulai, 3),
-        "sec_per_epoch": round((time.time() - mulai) / max(len(hasil.history), 1), 3),
+        "wall_sec": round(time.time() - start, 3),
+        "sec_per_epoch": round((time.time() - start) / max(len(result.history), 1), 3),
     }
-    tulis_json(run_dir / "metrics" / f"{fold.id:03d}_{seed}.json", metrik)
-    return metrik
+    write_json(run_dir / "metrics" / f"{fold.id:03d}_{seed}.json", metrics)
+    return metrics
 
 
-def latih_desain(
+def train_design(
     panel: PanelData,
     design: Any,
     lookback: int,
-    mk: dict[str, Any],
-    tk: dict[str, Any],
+    model_kw: dict[str, Any],
+    train_kw: dict[str, Any],
     seed: int,
     device: torch.device,
 ) -> float:
-    """Latih pada pembagian periode desain; kembalikan loss validasi.
+    """Train on the design-period split; return the validation loss.
 
-    Purge sudah melekat pada `design.train`; target sudah dibangun
-    sebelumnya oleh pemanggil sesuai horizon yang diuji.
+    Purge is already attached to `design.train`; the target was built
+    beforehand by the caller according to the horizon under test.
     """
-    fitur, target, _, _ = skala_panel(panel, design.train)
-    x_train, y_train = jendela_pool(
-        panel, fitur, target, design.train, design.banned, lookback
+    features, target, _, _ = scale_panel(panel, design.train)
+    x_train, y_train = window_pool(
+        panel, features, target, design.train, design.banned, lookback
     )
-    x_val, y_val = jendela_pool(panel, fitur, target, design.validation, [], lookback)
-    model = build_model(mk, seed)
-    hasil = train_model(
+    x_val, y_val = window_pool(panel, features, target, design.validation, [], lookback)
+    model = build_model(model_kw, seed)
+    result = train_model(
         model,
         (x_train, y_train),
         (x_val, y_val),
-        tk["batch_size"],
-        tk["epochs"],
-        tk["patience"],
-        tk["lr"],
-        tk["weight_decay"],
+        train_kw["batch_size"],
+        train_kw["epochs"],
+        train_kw["patience"],
+        train_kw["lr"],
+        train_kw["weight_decay"],
         seed,
         device,
     )
-    return hasil.best_val_loss
+    return result.best_val_loss
 
 
 def expand_grid(grid: dict[str, list]) -> list[dict[str, Any]]:
-    """Kembangkan kisi bertingkat menjadi daftar kombinasi."""
-    kombinasi: list[dict[str, Any]] = [{}]
-    for kunci, nilai in grid.items():
-        kombinasi = [{**k, kunci: v} for k in kombinasi for v in nilai]
-    return kombinasi
+    """Expand a nested grid into a list of combinations."""
+    combinations: list[dict[str, Any]] = [{}]
+    for key, value in grid.items():
+        combinations = [{**c, key: v} for c in combinations for v in value]
+    return combinations
 
 
-def sudah_selesai(run_dir: Path, id_lipatan: int, seed: int) -> bool:
-    """True bila bagian prediksi dan metrik pasangan ini sudah ada."""
-    bagian = run_dir / "predictions_parts" / f"{id_lipatan:03d}_{seed}.csv"
-    metrik = run_dir / "metrics" / f"{id_lipatan:03d}_{seed}.json"
-    return bagian.exists() and metrik.exists()
+def is_fold_done(run_dir: Path, fold_id: int, seed: int) -> bool:
+    """True if the prediction part and metrics for this pair already exist."""
+    part = run_dir / "predictions_parts" / f"{fold_id:03d}_{seed}.csv"
+    metrics = run_dir / "metrics" / f"{fold_id:03d}_{seed}.json"
+    return part.exists() and metrics.exists()
 
 
-def muat_panel(tickers: list[str], horizon: int) -> PanelData:
-    """Muat panel; saham tanpa berkas terproses dilewati dengan peringatan.
+def load_panel_data(tickers: list[str], horizon: int) -> PanelData:
+    """Load the panel; stocks without a processed file are skipped with a warning.
 
-    Universe resmi berisi 45 konstituen, tetapi dua di antaranya (SRIL,
-    WSKT) tidak tersedia di Yahoo Finance; daftar efektif dicatat di
-    `run_info.json` lewat `panel.tickers`.
+    The official universe holds 45 constituents, but two of them (SRIL,
+    WSKT) are unavailable on Yahoo Finance; the effective list is recorded
+    in `run_info.json` through `panel.tickers`.
     """
-    direktori = PROCESSED_DIR / "features"
-    tersedia = [
-        t for t in tickers if (direktori / f"{t.replace('.JK', '')}.csv").exists()
+    directory = PROCESSED_DIR / "features"
+    available = [
+        t for t in tickers if (directory / f"{t.replace('.JK', '')}.csv").exists()
     ]
-    hilang = [t for t in tickers if t not in tersedia]
-    if hilang:
+    missing = [t for t in tickers if t not in available]
+    if missing:
         print(
-            f"peringatan: {len(hilang)} saham tanpa berkas terproses "
-            f"dilewati: {hilang}"
+            f"warning: {len(missing)} stocks without a processed file "
+            f"skipped: {missing}"
         )
-    if not tersedia:
-        raise RuntimeError("tidak ada saham dengan berkas terproses")
-    return load_panel(direktori, tersedia, horizon)
+    if not available:
+        raise RuntimeError("no stock with a processed file")
+    return load_panel(directory, available, horizon)
 
 
-def gabungkan(run_dir: Path) -> pd.DataFrame:
-    """Gabungkan bagian prediksi dan metrik menjadi keluaran akhir.
+def merge_predictions(run_dir: Path) -> pd.DataFrame:
+    """Merge the prediction parts and metrics into the final outputs.
 
-    Penghapusan duplikat: setiap (tanggal, saham, seed) dipertahankan satu
-    baris dari lipatan terkecil yang memuat tanggal itu. Tanggal OOS
-    pertama muncul di validasi lipatan 0, sisanya muncul di jendela test
-    lipatan yang menaunginya; validasi lipatan berikutnya yang tumpang
-    tindih dengan test terdahulu tersingkir dengan sendirinya.
+    Deduplication: each (date, stock, seed) is kept as a single row from the
+    smallest fold that contains that date. The first OOS date appears in the
+    validation window of fold 0, the rest appear in the test window of the
+    fold that covers them; the validation window of the following fold that
+    overlaps the previous test is removed by itself.
     """
-    berkas_metrik = sorted((run_dir / "metrics").glob("*.json"))
-    if not berkas_metrik:
-        raise RuntimeError(f"tidak ada metrik di {run_dir}")
-    metrik = pd.DataFrame(
-        [json.loads(p.read_text(encoding="utf-8")) for p in berkas_metrik]
+    metric_files = sorted((run_dir / "metrics").glob("*.json"))
+    if not metric_files:
+        raise RuntimeError(f"no metrics in {run_dir}")
+    metrics = pd.DataFrame(
+        [json.loads(p.read_text(encoding="utf-8")) for p in metric_files]
     )
-    metrik.sort_values(["fold", "seed"]).to_csv(
+    metrics.sort_values(["fold", "seed"]).to_csv(
         run_dir / "fold_metrics.csv", index=False
     )
 
-    berkas_bagian = sorted((run_dir / "predictions_parts").glob("*.csv"))
-    bagian = pd.concat([pd.read_csv(p) for p in berkas_bagian], ignore_index=True)
-    bagian = bagian.sort_values("fold")
-    tanpa_duplikat = bagian.drop_duplicates(
-        subset=["date", "ticker", "seed"], keep="first"
-    )
-    tanpa_duplikat = tanpa_duplikat.sort_values(["date", "ticker", "seed"]).reset_index(
+    part_files = sorted((run_dir / "predictions_parts").glob("*.csv"))
+    part = pd.concat([pd.read_csv(p) for p in part_files], ignore_index=True)
+    part = part.sort_values("fold")
+    unique_rows = part.drop_duplicates(subset=["date", "ticker", "seed"], keep="first")
+    unique_rows = unique_rows.sort_values(["date", "ticker", "seed"]).reset_index(
         drop=True
     )
-    tanpa_duplikat.to_csv(run_dir / "predictions.csv", index=False)
-    return tanpa_duplikat
+    unique_rows.to_csv(run_dir / "predictions.csv", index=False)
+    return unique_rows
 
 
-def ringkasan_smoke(run_dir: Path, prediksi: pd.DataFrame) -> None:
-    """Pemeriksaan awal ringkas untuk mode smoke.
+def smoke_summary(run_dir: Path, predictions: pd.DataFrame) -> None:
+    """Concise initial check for smoke mode.
 
-    Korelasi prediksi dengan aktual di pasar saham cenderung kecil;
-    nilainya dicetak agar anomali (misalnya kebocoran data) langsung
-    terlihat.
+    The correlation between predictions and actual values in the stock
+    market tends to be small; it is printed so anomalies (for example data
+    leakage) become immediately visible.
     """
-    korelasi = prediksi[["pred_raw", "true_raw"]].corr().iloc[0, 1]
-    mse_raw = float(np.mean((prediksi["pred_raw"] - prediksi["true_raw"]) ** 2))
+    correlation = predictions[["pred_raw", "true_raw"]].corr().iloc[0, 1]
+    mse_raw = float(np.mean((predictions["pred_raw"] - predictions["true_raw"]) ** 2))
     print(
-        f"uji awal: korelasi prediksi dan aktual = {korelasi:.4f} "
-        f"(nilai kecil adalah wajar), MSE ruang asal = {mse_raw:.6f}"
+        f"initial check: correlation between predictions and actual = {correlation:.4f} "
+        f"(a small value is expected), raw-space MSE = {mse_raw:.6f}"
     )
     log(
         run_dir,
-        f"uji awal: korelasi {korelasi:.4f}, MSE ruang asal {mse_raw:.6f}",
+        f"initial check: correlation {correlation:.4f}, raw-space MSE {mse_raw:.6f}",
     )
 
 
-def tulis_run_info(
+def write_run_info(
     run_dir: Path,
     mode: str,
     seeds: list[int],
@@ -562,11 +565,11 @@ def tulis_run_info(
     threads: int,
     lookback: int,
     horizon: int,
-    n_lipatan: int,
+    n_folds: int,
     device: str,
     use_tuning: Path | None,
 ) -> None:
-    """Tulis rekaman eksekusi untuk audit."""
+    """Write the execution record for auditing."""
     info = {
         "mode": mode,
         "created_utc": datetime.now(UTC).isoformat(),
@@ -576,48 +579,48 @@ def tulis_run_info(
         "threads": threads,
         "lookback_days": lookback,
         "horizon_days": horizon,
-        "n_folds": n_lipatan,
+        "n_folds": n_folds,
         "device": device,
         "use_tuning": str(use_tuning) if use_tuning else None,
         "python": sys.version.split()[0],
         "torch": torch.__version__,
         "configs": {
-            nama: load_config(nama)
-            for nama in ("data", "split", "model", "portfolio", "experiment")
+            name: load_config(name)
+            for name in ("data", "split", "model", "portfolio", "experiment")
         },
     }
-    tulis_json(run_dir / "run_info.json", info)
+    write_json(run_dir / "run_info.json", info)
 
 
-def run_dryrun(args: argparse.Namespace) -> int:
-    """Cetak tabel lipatan tanpa melatih."""
+def run_dry_run(args: argparse.Namespace) -> int:
+    """Print the fold table without training."""
     model_cfg = load_config("model")
     split_cfg = load_config("split")
     tickers = list(load_config("universe")["tickers"])
-    hp = muat_tuning(args.use_tuning)
-    lookback = int(hp.get("lookback_days", model_cfg["lookback_days"]))
-    horizon = int(hp.get("horizon_days", model_cfg["horizon_days"]))
-    panel = muat_panel(tickers, horizon)
-    lipatan = make_folds(
+    tuned = load_tuning(args.use_tuning)
+    lookback = int(tuned.get("lookback_days", model_cfg["lookback_days"]))
+    horizon = int(tuned.get("horizon_days", model_cfg["horizon_days"]))
+    panel = load_panel_data(tickers, horizon)
+    folds = make_folds(
         len(panel.dates),
         split_cfg,
         purge_days=horizon,
         embargo_days=lookback - 1,
     )
     if args.folds:
-        lipatan = lipatan[: args.folds]
+        folds = folds[: args.folds]
 
     print(
-        f"kalender: {panel.dates[0].date()} s.d. {panel.dates[-1].date()}"
-        f" ({len(panel.dates)} hari), w={lookback}, tau={horizon}"
+        f"calendar: {panel.dates[0].date()} to {panel.dates[-1].date()}"
+        f" ({len(panel.dates)} days), w={lookback}, tau={horizon}"
     )
-    kepala = (
-        f"{'id':>3} {'latih s.d.':>12} {'validasi':>23} {'test':>23} "
-        f"{'n_latih':>9} {'n_val':>7} {'n_test':>7} {'larangan':>9}"
+    header = (
+        f"{'id':>3} {'train up to':>12} {'validation':>23} {'test':>23} "
+        f"{'n_train':>9} {'n_val':>7} {'n_test':>7} {'banned':>9}"
     )
-    print(kepala)
-    for fold in lipatan:
-        n_latih = sum(
+    print(header)
+    for fold in folds:
+        n_train = sum(
             len(
                 build_windows(
                     panel.features[t],
@@ -656,72 +659,73 @@ def run_dryrun(args: argparse.Namespace) -> int:
             )
             for t in panel.tickers
         )
-        rentang = lambda ab: (
+        span = lambda ab: (
             f"{panel.dates[ab[0]].date()} - {panel.dates[ab[1] - 1].date()}"
         )
         print(
             f"{fold.id:>3} {panel.dates[fold.train[1] - 1].date():>12} "
-            f"{rentang(fold.validation):>23} {rentang(fold.test):>23} "
-            f"{n_latih:>9} {n_val:>7} {n_test:>7} {len(fold.banned):>9}"
+            f"{span(fold.validation):>23} {span(fold.test):>23} "
+            f"{n_train:>9} {n_val:>7} {n_test:>7} {len(fold.banned):>9}"
         )
-    print(f"jumlah lipatan: {len(lipatan)}")
+    print(f"number of folds: {len(folds)}")
     return 0
 
 
 def run_tune(args: argparse.Namespace) -> int:
-    """Setel hyperparameter pada periode desain (grid + sensitivitas)."""
+    """Tune hyperparameters on the design period (grid + sensitivity)."""
     model_cfg = load_config("model")
     tickers = list(load_config("universe")["tickers"])
-    seeds = seed_list(args.seeds)
+    seeds = parse_seeds(args.seeds)
     device = resolve_device(model_cfg["device"])
     torch.set_num_threads(args.threads or torch.get_num_threads())
 
-    run_dir = args.out or nama_run("tune")
+    run_dir = args.out or new_run_dir("tune")
     ensure_dirs(run_dir)
-    log(run_dir, f"tuning dimulai: {len(seeds)} seed, perangkat {device}")
+    log(run_dir, f"tuning started: {len(seeds)} seeds, device {device}")
 
-    panel = muat_panel(tickers, 5)
+    panel = load_panel_data(tickers, 5)
     tune_cfg = model_cfg["tuning"]
     design = design_split(
         panel.dates, tune_cfg["train"], tune_cfg["validate"], horizon=5
     )
     log(
         run_dir,
-        f"periode desain: latih {panel.dates[design.train[0]].date()} s.d. "
-        f"{panel.dates[design.train[1] - 1].date()}; validasi "
-        f"{panel.dates[design.validation[0]].date()} s.d. "
+        f"design period: train {panel.dates[design.train[0]].date()} to "
+        f"{panel.dates[design.train[1] - 1].date()}; validation "
+        f"{panel.dates[design.validation[0]].date()} to "
         f"{panel.dates[design.validation[1] - 1].date()}",
     )
 
     grid = expand_grid(tune_cfg["grid"])
-    baris: list[dict[str, Any]] = []
-    for i, hp in enumerate(grid, 1):
-        mk = model_kwargs(model_cfg, hp)
-        tk = train_kwargs(model_cfg, hp)
-        skor = [latih_desain(panel, design, 60, mk, tk, seed, device) for seed in seeds]
-        baris.append(
+    rows: list[dict[str, Any]] = []
+    for i, tuned in enumerate(grid, 1):
+        model_kw = model_kwargs(model_cfg, tuned)
+        train_kw = train_kwargs(model_cfg, tuned)
+        scores = [
+            train_design(panel, design, 60, model_kw, train_kw, seed, device)
+            for seed in seeds
+        ]
+        rows.append(
             {
-                **hp,
-                "val_loss_mean": float(np.mean(skor)),
-                "val_loss_std": float(np.std(skor)),
+                **tuned,
+                "val_loss_mean": float(np.mean(scores)),
+                "val_loss_std": float(np.std(scores)),
             }
         )
         log(
             run_dir,
-            f"grid {i}/{len(grid)}: {hp} -> mean {np.mean(skor):.6f}",
+            f"grid {i}/{len(grid)}: {tuned} -> mean {np.mean(scores):.6f}",
         )
-    grid_df = pd.DataFrame(baris).sort_values("val_loss_mean")
+    grid_df = pd.DataFrame(rows).sort_values("val_loss_mean")
     grid_df.to_csv(run_dir / "grid_results.csv", index=False)
-    terbaik_hp = {
-        kunci: nilai
-        for kunci, nilai in grid_df.iloc[0].items()
-        if kunci in tune_cfg["grid"]
+    best_hp = {
+        key: value for key, value in grid_df.iloc[0].items() if key in tune_cfg["grid"]
     }
-    log(run_dir, f"grid terbaik: {terbaik_hp}")
+    log(run_dir, f"best grid: {best_hp}")
 
-    mk = model_kwargs(model_cfg, terbaik_hp)
-    tk = train_kwargs(model_cfg, terbaik_hp)
-    baris_sens: list[dict[str, Any]] = []
+    model_kw = model_kwargs(model_cfg, best_hp)
+    train_kw = train_kwargs(model_cfg, best_hp)
+    sensitivity_rows: list[dict[str, Any]] = []
     sens_cfg = model_cfg.get("sensitivity", {})
     for w in sens_cfg.get("lookback_days", [60]):
         for tau in sens_cfg.get("horizon_days", [5]):
@@ -730,132 +734,134 @@ def run_tune(args: argparse.Namespace) -> int:
             design_tau = design_split(
                 panel.dates, tune_cfg["train"], tune_cfg["validate"], tau
             )
-            skor = [
-                latih_desain(panel_tau, design_tau, w, mk, tk, seed, device)
+            scores = [
+                train_design(panel_tau, design_tau, w, model_kw, train_kw, seed, device)
                 for seed in seeds
             ]
-            baris_sens.append(
+            sensitivity_rows.append(
                 {
                     "lookback_days": w,
                     "horizon_days": tau,
-                    "val_loss_mean": float(np.mean(skor)),
-                    "val_loss_std": float(np.std(skor)),
+                    "val_loss_mean": float(np.mean(scores)),
+                    "val_loss_std": float(np.std(scores)),
                 }
             )
             log(
                 run_dir,
-                f"sensitivitas w={w} tau={tau} -> " f"mean {np.mean(skor):.6f}",
+                f"sensitivity w={w} tau={tau} -> " f"mean {np.mean(scores):.6f}",
             )
-    sens_df = pd.DataFrame(baris_sens).sort_values("val_loss_mean")
+    sens_df = pd.DataFrame(sensitivity_rows).sort_values("val_loss_mean")
     sens_df.to_csv(run_dir / "sensitivity_results.csv", index=False)
 
-    terbaik = dict(grid_df.iloc[0])
-    terbaik_w_tau = dict(sens_df.iloc[0])
+    best_grid = dict(grid_df.iloc[0])
+    best_window = dict(sens_df.iloc[0])
     best = {
-        "bilstm.units": int(terbaik["bilstm.units"]),
-        "batch_size": int(terbaik["batch_size"]),
-        "optimizer.weight_decay": float(terbaik["optimizer.weight_decay"]),
-        "pooling.size": int(terbaik["pooling.size"]),
-        "lookback_days": int(terbaik_w_tau["lookback_days"]),
-        "horizon_days": int(terbaik_w_tau["horizon_days"]),
-        "grid_val_loss_mean": float(terbaik["val_loss_mean"]),
-        "sensitivity_val_loss_mean": float(terbaik_w_tau["val_loss_mean"]),
+        "bilstm.units": int(best_grid["bilstm.units"]),
+        "batch_size": int(best_grid["batch_size"]),
+        "optimizer.weight_decay": float(best_grid["optimizer.weight_decay"]),
+        "pooling.size": int(best_grid["pooling.size"]),
+        "lookback_days": int(best_window["lookback_days"]),
+        "horizon_days": int(best_window["horizon_days"]),
+        "grid_val_loss_mean": float(best_grid["val_loss_mean"]),
+        "sensitivity_val_loss_mean": float(best_window["val_loss_mean"]),
         "seeds": seeds,
         "created_utc": datetime.now(UTC).isoformat(),
         "git_sha": git_sha(),
     }
-    with (run_dir / "best_hyperparams.yaml").open("w", encoding="utf-8") as pegangan:
-        yaml.safe_dump(best, pegangan, sort_keys=False, allow_unicode=True)
-    log(run_dir, f"hyperparameter terbaik dibekukan: {best}")
+    with (run_dir / "best_hyperparams.yaml").open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(best, handle, sort_keys=False, allow_unicode=True)
+    log(run_dir, f"best hyperparameters frozen: {best}")
     return 0
 
 
 def run_calibrate(args: argparse.Namespace) -> int:
-    """Ukur waktu pelatihan pada lipatan terkecil dan terbesar."""
+    """Measure the training time on the smallest and largest fold."""
     model_cfg = load_config("model")
     split_cfg = load_config("split")
     tickers = list(load_config("universe")["tickers"])
-    hp = muat_tuning(args.use_tuning)
-    lookback = int(hp.get("lookback_days", model_cfg["lookback_days"]))
-    horizon = int(hp.get("horizon_days", model_cfg["horizon_days"]))
-    mk = model_kwargs(model_cfg, hp)
-    tk = train_kwargs(model_cfg, hp, args.epochs)
+    tuned = load_tuning(args.use_tuning)
+    lookback = int(tuned.get("lookback_days", model_cfg["lookback_days"]))
+    horizon = int(tuned.get("horizon_days", model_cfg["horizon_days"]))
+    model_kw = model_kwargs(model_cfg, tuned)
+    train_kw = train_kwargs(model_cfg, tuned, args.epochs)
     device = resolve_device(model_cfg["device"])
     torch.set_num_threads(args.threads or torch.get_num_threads())
 
-    panel = muat_panel(tickers, horizon)
-    lipatan = make_folds(
+    panel = load_panel_data(tickers, horizon)
+    folds = make_folds(
         len(panel.dates),
         split_cfg,
         purge_days=horizon,
         embargo_days=lookback - 1,
     )
-    run_dir = args.out or nama_run("calibrate")
+    run_dir = args.out or new_run_dir("calibrate")
     ensure_dirs(
         run_dir / "predictions_parts",
         run_dir / "checkpoints",
         run_dir / "metrics",
     )
-    log(run_dir, f"kalibrasi dimulai: {len(lipatan)} lipatan tersedia")
+    log(run_dir, f"calibration started: {len(folds)} folds available")
 
-    ukuran: list[dict[str, Any]] = []
-    for fold in (lipatan[0], lipatan[-1]):
-        metrik = jalankan_fit(panel, fold, lookback, mk, tk, 0, device, run_dir, False)
-        ukuran.append(metrik)
+    measurements: list[dict[str, Any]] = []
+    for fold in (folds[0], folds[-1]):
+        metrics = run_fit(
+            panel, fold, lookback, model_kw, train_kw, 0, device, run_dir, False
+        )
+        measurements.append(metrics)
         log(
             run_dir,
-            f"lipatan {fold.id}: waktu {metrik['wall_sec']} detik, "
-            f"{metrik['sec_per_epoch']} detik/epoch, "
-            f"{metrik['best_epoch']} epoch",
+            f"fold {fold.id}: time {metrics['wall_sec']} seconds, "
+            f"{metrics['sec_per_epoch']} sec/epoch, "
+            f"{metrics['best_epoch']} epochs",
         )
-    pd.DataFrame(ukuran).to_csv(run_dir / "calibrate.csv", index=False)
+    pd.DataFrame(measurements).to_csv(run_dir / "calibrate.csv", index=False)
 
-    n_seed = len(seed_list(args.seeds))
-    n_fit = len(lipatan) * n_seed
-    cepat = ukuran[0]["wall_sec"] * n_fit
-    lambat = ukuran[1]["wall_sec"] * n_fit
+    n_seeds = len(parse_seeds(args.seeds))
+    n_fits = len(folds) * n_seeds
+    fast_total = measurements[0]["wall_sec"] * n_fits
+    slow_total = measurements[1]["wall_sec"] * n_fits
     log(
         run_dir,
-        f"ekstrapolasi {n_fit} pelatihan: "
-        f"{cepat / 3600:.1f} jam (laju lipatan awal) s.d. "
-        f"{lambat / 3600:.1f} jam (laju lipatan akhir)",
+        f"extrapolating {n_fits} training runs: "
+        f"{fast_total / 3600:.1f} hours (first-fold rate) to "
+        f"{slow_total / 3600:.1f} hours (last-fold rate)",
     )
     print(
-        f"perkiraan waktu total: {cepat / 3600:.1f} - "
-        f"{lambat / 3600:.1f} jam untuk {n_fit} pelatihan "
-        f"({len(lipatan)} lipatan x {n_seed} seed)"
+        f"estimated total time: {fast_total / 3600:.1f} - "
+        f"{slow_total / 3600:.1f} hours for {n_fits} training runs "
+        f"({len(folds)} folds x {n_seeds} seeds)"
     )
     return 0
 
 
 def run_pretrain(args: argparse.Namespace) -> int:
-    """Masked Autoencoder pre-training pada data OHLCV + makro (7 channel).
+    """Masked Autoencoder pre-training on OHLCV + macro data (7 channels).
 
-    Pre-training self-supervised tanpa label return. Encoder belajar
-    representasi harga universal dari semua saham LQ45.
+    Self-supervised pre-training without return labels. The encoder learns a
+    universal price representation from all LQ45 stocks.
     """
     model_cfg = load_config("model")
     pretrain_cfg = model_cfg.get("pretrain", {})
 
     tickers = list(load_config("universe")["tickers"])
-    seeds = seed_list(args.seeds)
+    seeds = parse_seeds(args.seeds)
     device = resolve_device(model_cfg["device"])
     torch.set_num_threads(args.threads or torch.get_num_threads())
 
-    run_dir = args.out or nama_run("pretrain")
+    run_dir = args.out or new_run_dir("pretrain")
     ensure_dirs(
         run_dir / "pretrained",
         run_dir / "metrics",
     )
-    log(run_dir, f"pre-training MAE dimulai: {len(seeds)} seed, perangkat {device}")
+    log(run_dir, f"MAE pre-training started: {len(seeds)} seeds, device {device}")
 
     if not pretrain_cfg.get("enabled", False):
         log(run_dir, "pre-training disabled in config (pretrain.enabled=false)")
         return 1
 
-    # Load raw stocks (OHLCV + BI-7DRRR + JISDOR = 7 channel) per saham
+    # Load raw stocks (OHLCV + BI-7DRRR + JISDOR = 7 channels) per stock
     stocks = load_raw_stocks(RAW_DIR, tickers)
-    log(run_dir, f"loaded {len(stocks)} saham untuk pre-training")
+    log(run_dir, f"loaded {len(stocks)} stocks for pre-training")
 
     # Build pretrain windows from all stocks
     lookback = int(model_cfg["lookback_days"])
@@ -936,7 +942,7 @@ def run_pretrain(args: argparse.Namespace) -> int:
     log(run_dir, f"pre-train samples: train {len(train_x)}, val {len(val_x)}")
 
     if len(train_x) == 0:
-        log(run_dir, "tidak ada data pre-train")
+        log(run_dir, "no pre-train data")
         return 1
 
     # Run pre-training for each seed
@@ -990,20 +996,21 @@ def run_pretrain(args: argparse.Namespace) -> int:
         )
 
         # Save metrics
-        metrik = {
+        metrics = {
             "seed": seed,
             "best_val_loss": result.best_val_loss,
             "best_epoch": result.best_epoch,
             "wall_sec": result.wall_sec,
         }
-        tulis_json(run_dir / "metrics" / f"pretrain_seed{seed}.json", metrik)
+        write_json(run_dir / "metrics" / f"pretrain_seed{seed}.json", metrics)
         log(
             run_dir,
-            f"seed {seed}: val_loss {result.best_val_loss:.6f}, epoch {result.best_epoch}",
+            f"seed {seed}: val_loss {result.best_val_loss:.6f}, "
+            f"epoch {result.best_epoch}",
         )
 
     # Save combined best (seed 0 as reference)
-    tulis_json(
+    write_json(
         run_dir / "metrics" / "pretrain_summary.json",
         {
             "seeds": seeds,
@@ -1012,16 +1019,17 @@ def run_pretrain(args: argparse.Namespace) -> int:
             "config": pretrain_cfg,
         },
     )
-    log(run_dir, f"pre-training selesai -> {run_dir / 'pretrained'}")
+    log(run_dir, f"pre-training done -> {run_dir / 'pretrained'}")
     return 0
 
 
 def run_walkforward_pretrain(args: argparse.Namespace) -> int:
-    """Walk-forward dengan pre-training: pre-train sekali, lalu fine-tune per lipatan.
+    """Walk-forward with a pre-trained encoder: fine-tune per fold.
 
-    Alur:
-    1. Jalankan pre-training (jika belum ada) untuk semua seed
-    2. Per lipatan: load pretrained encoder -> fine-tune -> prediksi
+    Flow:
+    1. Read the pre-trained encoder from `--pretrained-dir` (default
+       `run_dir/pretrained`); pre-training is NOT run automatically
+    2. Per fold: load `encoder_seed{N}.pt` for the seed -> fine-tune -> predict
     """
     model_cfg = load_config("model")
     pretrain_cfg = model_cfg.get("pretrain", {})
@@ -1029,19 +1037,19 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
     tickers = list(load_config("universe")["tickers"])
 
     if args.mode == "smoke":
-        seeds = seed_list(args.seeds)[:1]
-        batas_lipatan = args.folds or 2
-        batas_epoch = args.epochs or 3
+        seeds = parse_seeds(args.seeds)[:1]
+        fold_limit = args.folds or 2
+        epoch_limit = args.epochs or 3
     else:
-        seeds = seed_list(args.seeds)
-        batas_lipatan = args.folds
-        batas_epoch = args.epochs
+        seeds = parse_seeds(args.seeds)
+        fold_limit = args.folds
+        epoch_limit = args.epochs
 
-    hp = muat_tuning(args.use_tuning)
-    lookback = int(hp.get("lookback_days", model_cfg["lookback_days"]))
-    horizon = int(hp.get("horizon_days", model_cfg["horizon_days"]))
-    mk = model_kwargs(model_cfg, hp)
-    tk = train_kwargs(model_cfg, hp, batas_epoch)
+    tuned = load_tuning(args.use_tuning)
+    lookback = int(tuned.get("lookback_days", model_cfg["lookback_days"]))
+    horizon = int(tuned.get("horizon_days", model_cfg["horizon_days"]))
+    model_kw = model_kwargs(model_cfg, tuned)
+    train_kw = train_kwargs(model_cfg, tuned, epoch_limit)
 
     device = resolve_device(model_cfg["device"])
     threads = args.threads or torch.get_num_threads()
@@ -1049,18 +1057,19 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
         threads = max(1, min(4, (os.cpu_count() or 1) // args.jobs))
     torch.set_num_threads(threads)
 
-    # Load panel dengan target (supervised)
-    panel = muat_panel(tickers, horizon)
-    lipatan = make_folds(
+    # Load the panel with the target (supervised)
+    panel = load_panel_data(tickers, horizon)
+    folds = make_folds(
         len(panel.dates),
         split_cfg,
         purge_days=horizon,
         embargo_days=lookback - 1,
     )
-    if batas_lipatan:
-        lipatan = lipatan[:batas_lipatan]
+    if fold_limit:
+        folds = folds[:fold_limit]
 
-    run_dir = args.out or nama_run("walk-forward-pretrain")
+    run_dir = args.out or new_run_dir("walk-forward-pretrain")
+    pretrained_dir = args.pretrained_dir or (run_dir / "pretrained")
     ensure_dirs(
         run_dir / "predictions_parts",
         run_dir / "checkpoints",
@@ -1069,9 +1078,10 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
     )
     log(
         run_dir,
-        f"mulai walk-forward-pretrain: {len(lipatan)} lipatan, {len(seeds)} seed, "
-        f"jobs {args.jobs}, thread {threads}, perangkat {device}",
+        f"starting walk-forward-pretrain: {len(folds)} folds, {len(seeds)} seeds, "
+        f"jobs {args.jobs}, threads {threads}, device {device}",
     )
+    log(run_dir, f"pre-trained encoder read from: {pretrained_dir}")
 
     # Fine-tune config
     ft_cfg = pretrain_cfg.get("fine_tune", {})
@@ -1080,25 +1090,26 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
     encoder_lr = ft_cfg.get("encoder_lr", 1e-5)
     ft_weight_decay = pretrain_cfg.get("weight_decay", 0.0)
 
-    pasangan = [(fold.id, seed) for fold in lipatan for seed in seeds]
-    pasangan = [
-        p for p in pasangan if not (args.resume and sudah_selesai(run_dir, p[0], p[1]))
+    pairs = [(fold.id, seed) for fold in folds for seed in seeds]
+    pairs = [
+        p for p in pairs if not (args.resume and is_fold_done(run_dir, p[0], p[1]))
     ]
 
-    if not pasangan:
-        log(run_dir, "semua pasangan sudah selesai (mode lanjut)")
+    if not pairs:
+        log(run_dir, "all pairs already done (resume mode)")
     elif args.jobs <= 1:
-        for id_lipatan, seed in pasangan:
-            fold = lipatan[id_lipatan]
-            metrik = jalankan_fit_pretrain(
+        for fold_id, seed in pairs:
+            fold = folds[fold_id]
+            metrics = run_fit_pretrain(
                 panel,
                 fold,
                 lookback,
-                mk,
-                tk,
+                model_kw,
+                train_kw,
                 seed,
                 device,
                 run_dir,
+                pretrained_dir,
                 not args.no_checkpoints,
                 freeze_encoder,
                 head_lr,
@@ -1107,27 +1118,29 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
             )
             log(
                 run_dir,
-                f"lipatan {fold.id} seed {seed}: val "
-                f"{metrik['val_loss']:.6f}, test {metrik['test_loss']:.6f}, "
-                f"waktu {metrik['wall_sec']} detik",
+                f"fold {fold.id} seed {seed}: val "
+                f"{metrics['val_loss']:.6f}, test {metrics['test_loss']:.6f}, "
+                f"time {metrics['wall_sec']} seconds",
             )
     else:
         # Parallel execution would need panel pickling - skip for now
         log(
             run_dir,
-            "parallel jobs tidak didukung untuk walk-forward-pretrain (gunakan --jobs 1)",
+            "parallel jobs are not supported for walk-forward-pretrain "
+            "(use --jobs 1)",
         )
-        for id_lipatan, seed in pasangan:
-            fold = lipatan[id_lipatan]
-            metrik = jalankan_fit_pretrain(
+        for fold_id, seed in pairs:
+            fold = folds[fold_id]
+            metrics = run_fit_pretrain(
                 panel,
                 fold,
                 lookback,
-                mk,
-                tk,
+                model_kw,
+                train_kw,
                 seed,
                 device,
                 run_dir,
+                pretrained_dir,
                 not args.no_checkpoints,
                 freeze_encoder,
                 head_lr,
@@ -1136,13 +1149,13 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
             )
             log(
                 run_dir,
-                f"lipatan {fold.id} seed {seed}: val "
-                f"{metrik['val_loss']:.6f}, test {metrik['test_loss']:.6f}, "
-                f"waktu {metrik['wall_sec']} detik",
+                f"fold {fold.id} seed {seed}: val "
+                f"{metrics['val_loss']:.6f}, test {metrics['test_loss']:.6f}, "
+                f"time {metrics['wall_sec']} seconds",
             )
 
-    prediksi = gabungkan(run_dir)
-    tulis_run_info(
+    predictions = merge_predictions(run_dir)
+    write_run_info(
         run_dir,
         args.mode,
         seeds,
@@ -1150,72 +1163,70 @@ def run_walkforward_pretrain(args: argparse.Namespace) -> int:
         threads,
         lookback,
         horizon,
-        len(lipatan),
+        len(folds),
         str(device),
         args.use_tuning,
     )
     log(
         run_dir,
-        f"selesai: {len(prediksi)} baris prediksi -> " f"{run_dir / 'predictions.csv'}",
+        f"done: {len(predictions)} prediction rows -> "
+        f"{run_dir / 'predictions.csv'}",
     )
     if args.mode == "smoke":
-        ringkasan_smoke(run_dir, prediksi)
+        smoke_summary(run_dir, predictions)
     return 0
 
 
-def jalankan_fit_pretrain(
+def run_fit_pretrain(
     panel: PanelData,
     fold: Fold,
     lookback: int,
-    mk: dict[str, Any],
-    tk: dict[str, Any],
+    model_kw: dict[str, Any],
+    train_kw: dict[str, Any],
     seed: int,
     device: torch.device,
     run_dir: Path,
-    simpan_checkpoint: bool,
+    pretrained_dir: Path,
+    save_checkpoint: bool,
     freeze_encoder: bool,
     head_lr: float,
     encoder_lr: float,
     weight_decay: float,
 ) -> dict[str, Any]:
-    """Latih satu (lipatan, seed) dengan pre-trained encoder + fine-tune."""
-    mulai = time.time()
+    """Train one (fold, seed) with a pre-trained encoder + fine-tune."""
+    start = time.time()
 
-    # Load pretrained encoder for this seed
-    pretrained_path = run_dir / "pretrained" / f"encoder_seed{seed}.pt"
+    # Load the pre-trained encoder for this seed (required, no fallback)
+    pretrained_path = pretrained_dir / f"encoder_seed{seed}.pt"
     if not pretrained_path.exists():
-        # Fallback: check for any pretrained encoder
-        pretrained_files = list(run_dir.glob("pretrained/encoder_seed*.pt"))
-        if pretrained_files:
-            pretrained_path = pretrained_files[0]
-            log(run_dir, f"fallback pretrained: {pretrained_path}")
-        else:
-            raise FileNotFoundError(
-                f"pre-trained encoder tidak ditemukan: {pretrained_path}"
-            )
+        available = sorted(p.name for p in pretrained_dir.glob("encoder_seed*.pt"))
+        raise FileNotFoundError(
+            f"encoder_seed{seed}.pt is missing in {pretrained_dir}. "
+            f"Available: {available}"
+        )
 
     # Scale panel
-    fitur, target, _, prep_target = skala_panel(panel, fold.train)
-    x_train, y_train = jendela_pool(
-        panel, fitur, target, fold.train, fold.banned, lookback
+    features, target, _, target_prep = scale_panel(panel, fold.train)
+    x_train, y_train = window_pool(
+        panel, features, target, fold.train, fold.banned, lookback
     )
-    x_val, y_val = jendela_pool(panel, fitur, target, fold.validation, [], lookback)
-    x_test, y_test = jendela_pool(panel, fitur, target, fold.test, [], lookback)
+    x_val, y_val = window_pool(panel, features, target, fold.validation, [], lookback)
+    x_test, y_test = window_pool(panel, features, target, fold.test, [], lookback)
 
     # Build model with pretrained encoder
-    model = build_model(mk, seed)
+    model = build_model(model_kw, seed)
     load_pretrained_encoder(
         model.encoder, torch.load(pretrained_path, map_location=device)
     )
 
     # Fine-tune
-    hasil = fine_tune_model(
+    result = fine_tune_model(
         model,
         (x_train, y_train),
         (x_val, y_val),
-        tk["batch_size"],
-        tk["epochs"],
-        tk["patience"],
+        train_kw["batch_size"],
+        train_kw["epochs"],
+        train_kw["patience"],
         head_lr,
         encoder_lr,
         weight_decay,
@@ -1224,40 +1235,40 @@ def jalankan_fit_pretrain(
         freeze_encoder=freeze_encoder,
     )
 
-    pred_test = predict(model, x_test, tk["batch_size"], device)
+    pred_test = predict(model, x_test, train_kw["batch_size"], device)
     test_loss = float(np.mean((pred_test - y_test) ** 2))
 
-    baris: list[dict[str, Any]] = []
-    for rentang, peran in (
+    rows: list[dict[str, Any]] = []
+    for span, role in (
         (fold.validation, "validation"),
         (fold.test, "test"),
     ):
         for ticker in panel.tickers:
             x, y, idx = build_windows(
-                fitur[ticker],
+                features[ticker],
                 target[ticker],
                 lookback,
-                rentang[0],
-                rentang[1],
+                span[0],
+                span[1],
                 [],
             )
             if len(y) == 0:
                 continue
-            pred = predict(model, x, tk["batch_size"], device)
-            pred_raw = prep_target.inverse_transform(pd.DataFrame({"target": pred}))[
+            pred = predict(model, x, train_kw["batch_size"], device)
+            pred_raw = target_prep.inverse_transform(pd.DataFrame({"target": pred}))[
                 "target"
             ].to_numpy()
-            y_raw = prep_target.inverse_transform(pd.DataFrame({"target": y}))[
+            y_raw = target_prep.inverse_transform(pd.DataFrame({"target": y}))[
                 "target"
             ].to_numpy()
-            for j, posisi in enumerate(idx):
-                baris.append(
+            for j, position in enumerate(idx):
+                rows.append(
                     {
                         "fold": fold.id,
                         "seed": seed,
-                        "date": panel.dates[posisi].date().isoformat(),
+                        "date": panel.dates[position].date().isoformat(),
                         "ticker": ticker,
-                        "role": peran,
+                        "role": role,
                         "pred_scaled": float(pred[j]),
                         "true_scaled": float(y[j]),
                         "pred_raw": float(pred_raw[j]),
@@ -1265,8 +1276,8 @@ def jalankan_fit_pretrain(
                     }
                 )
 
-    bagian = pd.DataFrame(
-        baris,
+    part = pd.DataFrame(
+        rows,
         columns=[
             "fold",
             "seed",
@@ -1279,114 +1290,114 @@ def jalankan_fit_pretrain(
             "true_raw",
         ],
     )
-    bagian.to_csv(
+    part.to_csv(
         run_dir / "predictions_parts" / f"{fold.id:03d}_{seed}.csv",
         index=False,
     )
-    if simpan_checkpoint:
+    if save_checkpoint:
         torch.save(
-            hasil.state_dict,
+            result.state_dict,
             run_dir / "checkpoints" / f"{fold.id:03d}_{seed}.pt",
         )
 
-    metrik = {
+    metrics = {
         "fold": fold.id,
         "seed": seed,
-        "train_loss": hasil.history[-1]["train_loss"],
-        "val_loss": hasil.best_val_loss,
+        "train_loss": result.history[-1]["train_loss"],
+        "val_loss": result.best_val_loss,
         "test_loss": test_loss,
-        "best_epoch": hasil.best_epoch,
-        "stopped_early": hasil.stopped_early,
+        "best_epoch": result.best_epoch,
+        "stopped_early": result.stopped_early,
         "n_train": len(y_train),
         "n_val": len(y_val),
         "n_test": len(y_test),
-        "wall_sec": round(time.time() - mulai, 3),
-        "sec_per_epoch": round((time.time() - mulai) / max(len(hasil.history), 1), 3),
+        "wall_sec": round(time.time() - start, 3),
+        "sec_per_epoch": round((time.time() - start) / max(len(result.history), 1), 3),
     }
-    tulis_json(run_dir / "metrics" / f"{fold.id:03d}_{seed}.json", metrik)
-    return metrik
+    write_json(run_dir / "metrics" / f"{fold.id:03d}_{seed}.json", metrics)
+    return metrics
 
 
 @dataclass
-class _KonteksPekerja:
-    """Konteks proses pekerja; diisi oleh fungsi inisialisasi."""
+class _WorkerContext:
+    """Worker process context; filled in by the initializer function."""
 
     panel: PanelData | None = None
-    lipatan: list[Fold] | None = None
+    folds: list[Fold] | None = None
     lookback: int | None = None
-    mk: dict[str, Any] | None = None
-    tk: dict[str, Any] | None = None
+    model_kw: dict[str, Any] | None = None
+    train_kw: dict[str, Any] | None = None
     device: torch.device | None = None
     run_dir: Path | None = None
-    simpan_checkpoint: bool | None = None
+    save_checkpoint: bool | None = None
 
 
-_pekerja: _KonteksPekerja | None = None
+_worker: _WorkerContext | None = None
 
 
-def _awal_pekerja(
+def _init_worker(
     panel: PanelData,
-    lipatan: list[Fold],
+    folds: list[Fold],
     lookback: int,
-    mk: dict[str, Any],
-    tk: dict[str, Any],
+    model_kw: dict[str, Any],
+    train_kw: dict[str, Any],
     device: torch.device,
     run_dir: Path,
-    simpan_checkpoint: bool,
+    save_checkpoint: bool,
     thread: int,
 ) -> None:
-    """Inisialisasi proses pekerja paralel."""
-    global _pekerja
+    """Initialize the parallel worker process."""
+    global _worker
     torch.set_num_threads(thread)
-    _pekerja = _KonteksPekerja()
-    _pekerja.panel = panel
-    _pekerja.lipatan = lipatan
-    _pekerja.lookback = lookback
-    _pekerja.mk = mk
-    _pekerja.tk = tk
-    _pekerja.device = device
-    _pekerja.run_dir = run_dir
-    _pekerja.simpan_checkpoint = simpan_checkpoint
+    _worker = _WorkerContext()
+    _worker.panel = panel
+    _worker.folds = folds
+    _worker.lookback = lookback
+    _worker.model_kw = model_kw
+    _worker.train_kw = train_kw
+    _worker.device = device
+    _worker.run_dir = run_dir
+    _worker.save_checkpoint = save_checkpoint
 
 
-def _tugas_fit(pasangan: tuple[int, int]) -> tuple[int, int]:
-    """Jalankan satu (lipatan, seed) di proses pekerja."""
-    id_lipatan, seed = pasangan
-    fold = _pekerja.lipatan[id_lipatan]
-    jalankan_fit(
-        _pekerja.panel,
+def _fit_task(pairs: tuple[int, int]) -> tuple[int, int]:
+    """Run one (fold, seed) in the worker process."""
+    fold_id, seed = pairs
+    fold = _worker.folds[fold_id]
+    run_fit(
+        _worker.panel,
         fold,
-        _pekerja.lookback,
-        _pekerja.mk,
-        _pekerja.tk,
+        _worker.lookback,
+        _worker.model_kw,
+        _worker.train_kw,
         seed,
-        _pekerja.device,
-        _pekerja.run_dir,
-        _pekerja.simpan_checkpoint,
+        _worker.device,
+        _worker.run_dir,
+        _worker.save_checkpoint,
     )
-    return id_lipatan, seed
+    return fold_id, seed
 
 
 def run_walkforward(args: argparse.Namespace) -> int:
-    """Jalankan walk-forward penuh (atau smoke) dan tulis prediksi."""
+    """Run the full walk-forward (or smoke) and write the predictions."""
     model_cfg = load_config("model")
     split_cfg = load_config("split")
     tickers = list(load_config("universe")["tickers"])
 
     if args.mode == "smoke":
-        seeds = seed_list(args.seeds)[:1]
-        batas_lipatan = args.folds or 2
-        batas_epoch = args.epochs or 3
+        seeds = parse_seeds(args.seeds)[:1]
+        fold_limit = args.folds or 2
+        epoch_limit = args.epochs or 3
     else:
-        seeds = seed_list(args.seeds)
-        batas_lipatan = args.folds
-        batas_epoch = args.epochs
+        seeds = parse_seeds(args.seeds)
+        fold_limit = args.folds
+        epoch_limit = args.epochs
 
-    hp = muat_tuning(args.use_tuning)
-    lookback = int(hp.get("lookback_days", model_cfg["lookback_days"]))
-    horizon = int(hp.get("horizon_days", model_cfg["horizon_days"]))
-    mk = model_kwargs(model_cfg, hp)
-    tk = train_kwargs(model_cfg, hp, batas_epoch)
+    tuned = load_tuning(args.use_tuning)
+    lookback = int(tuned.get("lookback_days", model_cfg["lookback_days"]))
+    horizon = int(tuned.get("horizon_days", model_cfg["horizon_days"]))
+    model_kw = model_kwargs(model_cfg, tuned)
+    train_kw = train_kwargs(model_cfg, tuned, epoch_limit)
 
     device = resolve_device(model_cfg["device"])
     threads = args.threads or torch.get_num_threads()
@@ -1394,17 +1405,17 @@ def run_walkforward(args: argparse.Namespace) -> int:
         threads = max(1, min(4, (os.cpu_count() or 1) // args.jobs))
     torch.set_num_threads(threads)
 
-    panel = muat_panel(tickers, horizon)
-    lipatan = make_folds(
+    panel = load_panel_data(tickers, horizon)
+    folds = make_folds(
         len(panel.dates),
         split_cfg,
         purge_days=horizon,
         embargo_days=lookback - 1,
     )
-    if batas_lipatan:
-        lipatan = lipatan[:batas_lipatan]
+    if fold_limit:
+        folds = folds[:fold_limit]
 
-    run_dir = args.out or nama_run(args.mode)
+    run_dir = args.out or new_run_dir(args.mode)
     ensure_dirs(
         run_dir / "predictions_parts",
         run_dir / "checkpoints",
@@ -1412,25 +1423,25 @@ def run_walkforward(args: argparse.Namespace) -> int:
     )
     log(
         run_dir,
-        f"mulai {args.mode}: {len(lipatan)} lipatan, {len(seeds)} seed, "
-        f"jobs {args.jobs}, thread {threads}, perangkat {device}",
+        f"starting {args.mode}: {len(folds)} folds, {len(seeds)} seeds, "
+        f"jobs {args.jobs}, threads {threads}, device {device}",
     )
 
-    pasangan = [(fold.id, seed) for fold in lipatan for seed in seeds]
-    pasangan = [
-        p for p in pasangan if not (args.resume and sudah_selesai(run_dir, p[0], p[1]))
+    pairs = [(fold.id, seed) for fold in folds for seed in seeds]
+    pairs = [
+        p for p in pairs if not (args.resume and is_fold_done(run_dir, p[0], p[1]))
     ]
-    if not pasangan:
-        log(run_dir, "semua pasangan sudah selesai (mode lanjut)")
+    if not pairs:
+        log(run_dir, "all pairs already done (resume mode)")
     elif args.jobs <= 1:
-        for id_lipatan, seed in pasangan:
-            fold = lipatan[id_lipatan]
-            metrik = jalankan_fit(
+        for fold_id, seed in pairs:
+            fold = folds[fold_id]
+            metrics = run_fit(
                 panel,
                 fold,
                 lookback,
-                mk,
-                tk,
+                model_kw,
+                train_kw,
                 seed,
                 device,
                 run_dir,
@@ -1438,31 +1449,31 @@ def run_walkforward(args: argparse.Namespace) -> int:
             )
             log(
                 run_dir,
-                f"lipatan {fold.id} seed {seed}: val "
-                f"{metrik['val_loss']:.6f}, test {metrik['test_loss']:.6f}, "
-                f"waktu {metrik['wall_sec']} detik",
+                f"fold {fold.id} seed {seed}: val "
+                f"{metrics['val_loss']:.6f}, test {metrics['test_loss']:.6f}, "
+                f"time {metrics['wall_sec']} seconds",
             )
     else:
         with ProcessPoolExecutor(
             max_workers=args.jobs,
-            initializer=_awal_pekerja,
+            initializer=_init_worker,
             initargs=(
                 panel,
-                lipatan,
+                folds,
                 lookback,
-                mk,
-                tk,
+                model_kw,
+                train_kw,
                 device,
                 run_dir,
                 not args.no_checkpoints,
                 max(1, threads),
             ),
         ) as pool:
-            for id_lipatan, seed in pool.map(_tugas_fit, pasangan):
-                log(run_dir, f"selesai lipatan {id_lipatan} seed {seed}")
+            for fold_id, seed in pool.map(_fit_task, pairs):
+                log(run_dir, f"finished fold {fold_id} seed {seed}")
 
-    prediksi = gabungkan(run_dir)
-    tulis_run_info(
+    predictions = merge_predictions(run_dir)
+    write_run_info(
         run_dir,
         args.mode,
         seeds,
@@ -1470,28 +1481,29 @@ def run_walkforward(args: argparse.Namespace) -> int:
         threads,
         lookback,
         horizon,
-        len(lipatan),
+        len(folds),
         str(device),
         args.use_tuning,
     )
     log(
         run_dir,
-        f"selesai: {len(prediksi)} baris prediksi -> " f"{run_dir / 'predictions.csv'}",
+        f"done: {len(predictions)} prediction rows -> "
+        f"{run_dir / 'predictions.csv'}",
     )
     if args.mode == "smoke":
-        ringkasan_smoke(run_dir, prediksi)
+        smoke_summary(run_dir, predictions)
     return 0
 
 
 def main() -> int:
-    """Jalankan mode yang diminta."""
+    """Run the requested mode."""
     args = parse_args()
     if args.mode == "tune":
         return run_tune(args)
     if args.mode == "calibrate":
         return run_calibrate(args)
     if args.mode == "dry-run":
-        return run_dryrun(args)
+        return run_dry_run(args)
     if args.mode == "pretrain":
         return run_pretrain(args)
     if args.mode == "walk-forward-pretrain":
