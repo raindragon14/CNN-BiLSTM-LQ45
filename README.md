@@ -55,8 +55,8 @@ The system evaluates rigorously with deflated Sharpe ratio (DSR), probability of
 
 ```bash
 # Clone and setup
-git clone https://github.com/raindragon14/CNN-BiLSTM-LQ45
-cd CNN-BiLSTM-LQ45
+git clone https://github.com/raindragon14/NeuralAlpha
+cd NeuralAlpha
 python -m venv .venv --system-site-packages
 source .venv/bin/activate
 pip install -e ".[dev]"
