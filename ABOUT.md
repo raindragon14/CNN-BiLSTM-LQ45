@@ -16,7 +16,7 @@
 
 **NeuralAlpha** is a production-grade two-stage portfolio optimization pipeline for Indonesian equities (LQ45 index). The system:
 
-1. **Pre-trains a neural network using self-supervised learning** (Masked Autoencoder) on raw OHLCV price data and macroeconomic indicators — no return labels needed. The encoder learns universal representations of price movements across 43 stocks.
+1. **Pre-trains a neural network using self-supervised learning** (Masked Autoencoder) on the 8-feature market panel — no return labels needed, and the pre-training data is capped at the design period so the backtest never sees the future. The encoder learns universal representations of price movements across 43 stocks and transfers into the supervised model unchanged.
 
 2. **Fine-tunes with a CNN-BiLSTM architecture** using walk-forward validation (65 expanding windows, purge + embargo to prevent look-ahead bias). Five-seed ensemble averages predictions to reduce variance.
 
@@ -35,7 +35,7 @@
 | **Optimization** | scipy.optimize (SLSQP), custom mean-variance solver |
 | **Data** | Yahoo Finance API, Bank Indonesia API (JISDOR, BI-7DRRR) |
 | **Infrastructure** | Docker, Python 3.11+, Git |
-| **Testing** | pytest (19 tests), ruff, black, mypy |
+| **Testing** | pytest (30 tests), ruff, black, mypy |
 
 ---
 
@@ -43,7 +43,7 @@
 
 | Innovation | Why It Matters |
 |------------|----------------|
-| **Self-supervised pre-training (MAE)** | Learns price representations without return labels — no look-ahead bias from future data |
+| **Self-supervised pre-training (MAE)** | Learns price representations without return labels; pre-training data is capped at the design period, so no look-ahead bias from future data |
 | **Discriminative learning rates** | Encoder LR 10× smaller than head LR — preserves pre-trained features during fine-tuning |
 | **Walk-forward with purge + embargo** | Eliminates look-ahead bias (Lopez de Prado 2018) — industry-standard backtest hygiene |
 | **Realistic IDX cost modeling** | Buy/sell fees, lot size (100 shares) — not theoretical, reflects actual Indonesian retail trading |

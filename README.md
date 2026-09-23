@@ -12,7 +12,7 @@
 
 **NeuralAlpha** is a deep learning research project that builds **neural network systems** to optimize investment portfolios. It combines three cutting-edge AI techniques:
 
-- **Self-supervised learning** — A Masked Autoencoder (MAE) pre-trains on raw OHLCV price data and macroeconomic indicators (BI-7DRRR, JISDOR) without return labels, learning universal representations of price movements across 43 LQ45 stocks
+- **Self-supervised learning** — A Masked Autoencoder (MAE) pre-trains on the same 8-feature market panel the supervised model consumes (price, volume, technical indicators, BI-7DRRR, JISDOR) without return labels, so the encoder transfers unchanged; pre-training data is capped at the design period (`pretrain.data_end`) so nothing from the OOS window leaks in
 - **Deep sequence modeling** — A CNN-BiLSTM architecture with walk-forward validation (65 expanding windows, purge + embargo) predicts 5-day log-returns; 5-seed ensemble reduces variance
 - **Mathematical optimization** — Top-k stocks are selected by ensemble predictions, then Mean-Variance optimization allocates weights under realistic Indonesian market constraints (buy 0.19%, sell 0.29%, lot 100)
 
@@ -26,7 +26,7 @@ The system evaluates rigorously with deflated Sharpe ratio (DSR), probability of
 |--------|---------|
 | **Universe** | 43/45 LQ45 constituents (Aug 2019–Jan 2020 composition) |
 | **Period** | 2018–2025 (8 years, includes COVID-19, rate hike cycles) |
-| **Architecture** | CNN (32→64) + BiLSTM (64×2) with MAE self-supervised pre-training on 7 channels (OHLCV + BI-7DRRR + JISDOR) |
+| **Architecture** | CNN (32→64) + BiLSTM (64×2) with MAE self-supervised pre-training on the 8-feature panel (`FEATURE_COLUMNS`) |
 | **Training** | Walk-forward expanding window (65 folds), purge/embargo, 5 seeds, discriminative LR fine-tuning |
 | **Optimization** | Mean-Variance (target-return), 4 covariance estimators, monthly rebalancing (21 days) |
 | **Costs** | Buy 0.19%, Sell 0.29%, Lot 100 shares (IDX retail rules) |
@@ -38,7 +38,7 @@ The system evaluates rigorously with deflated Sharpe ratio (DSR), probability of
 
 1. **Data Pipeline**: Daily OHLCV from Yahoo Finance (`.JK`), BI-7DRRR (policy rate), JISDOR (USD/IDR) from Bank Indonesia, IHSG benchmark
 2. **Feature Engineering**: 8 features per stock — price, volume, RSI(14), CCI(20), CMO(14), MFI(14), BI-7DRRR (level), JISDOR (log-return); winsorization + min-max scaling fit **only on training windows**
-3. **Self-Supervised Pre-training (MAE)**: Masked Autoencoder on 7-channel raw data (OHLCV + macro), 30% masking, reconstruct OHLCV only — learns universal price representations without return labels
+3. **Self-Supervised Pre-training (MAE)**: Masked Autoencoder on the same 8-feature panel, 30% masking, reconstruction loss on masked positions only — learns universal market representations without return labels (data capped at `pretrain.data_end` = 2019-12-31)
 4. **Walk-Forward Fine-tuning**: CNN-BiLSTM predicts 5-day log-returns, nested walk-forward CV with purge (τ=5) and embargo (w-1=59), expanding training window, 5-seed ensemble
 5. **Top-k Preselection**: Ensemble average of 5 seeds ranks stocks; select top-k (k=5,7,10 + sensitivity 3,15,20)
 6. **Mean-Variance Optimization**: Minimize variance s.t. target return = ensemble mean prediction; covariance estimators: sample, ridge, Ledoit-Wolf, GMV; max weight 35% (sensitivity 25/50/100%)
@@ -116,7 +116,7 @@ data/             raw/, interim/, processed/ (gitignored — see data/README.md)
 docs/             keputusan_desain.md (decision log with citations)
 scripts/          Numbered pipeline 01_fetch → 05_evaluate
 src/lq45/    Package: data, features, models, portfolio, evaluation, utils
-tests/            19 unit tests (pytest)
+tests/            30 unit tests (pytest)
 ```
 
 ---
@@ -134,9 +134,13 @@ tests/            19 unit tests (pytest)
 | Evaluation & regime analysis | ⏳ Pending | Requires full grid outputs |
 
 > **Note**: Correctness fixes (2026-09-22) changed MAE pre-training (per-sample masking), pre-trained
-> encoder resolution, MV optimizer determinism, and Romano-Wolf. All prior `experiments/pretrain_*`
-> outputs are invalid. Results shown are from intermediate runs; final journal submission pending full
-> grid evaluation on both baseline and pre-trained prediction sets.
+> encoder resolution, MV optimizer determinism, and Romano-Wolf. Correctness fixes (2026-09-23) aligned
+> MAE pre-training to the 8-feature panel (encoder transfer), capped pre-training data at the design
+> period (`pretrain.data_end`), restored the Jan-Apr 2020 OOS window, corrected DSR/Romano-Wolf/Sortino
+> formulas, added the Ledoit-Wolf (2008) Sharpe test, a 1-day execution lag and fee-paying 1/N
+> baselines, and removed `turnover_adjusted_sharpe`. All prior `experiments/pretrain_*` outputs are
+> invalid. Results shown are from intermediate runs; final journal submission pending full grid
+> evaluation on both baseline and pre-trained prediction sets.
 
 ---
 
@@ -150,7 +154,7 @@ tests/            19 unit tests (pytest)
 | **Sortino Ratio** | — | — | — | — |
 | **Calmar Ratio** | — | — | — | — |
 | **Max Drawdown** | — | — | — | — |
-| **Turnover-Adjusted Sharpe** | — | — | — | — |
+| **Turnover (mean per rebalance)** | — | — | — | — |
 | **Deflated Sharpe (DSR)** | — | — | — | — |
 | **PBO (Grid Utama)** | — | — | — | — |
 

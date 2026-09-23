@@ -105,9 +105,9 @@ without relying on memory.
 | Weight cap | `max_weight` = 35% | No paper sets it; sensitivity tested at the portfolio stage (25%, 35%, 50%, 100%) | `configs/portfolio.yaml` | final |
 | Covariance estimators | sample, ridge, Ledoit-Wolf, GMV (comparison, not assumption) | DeMiguel et al. (2009); Ledoit & Wolf (2004) | `configs/portfolio.yaml` | final |
 | Rebalancing | monthly (21 days) | Espiga-Fernandez et al. (2024) (periodic rebalancing is more cost-efficient); Huang et al. (2024) | `configs/portfolio.yaml` | final |
-| Metrics | Sharpe, Sortino, Calmar, MDD, turnover, DSR, PBO | Bailey & Lopez de Prado (2014); Bailey et al. (2016) | `configs/experiment.yaml` | final |
-| Significance tests | Ledoit-Wolf HAC for Sharpe; Romano-Wolf for multiple testing | Ledoit & Wolf (2008) robustify the Jobson & Korkie (1981) test against non-normality and time-series dependence; Romano & Wolf (2005) for data snooping | `configs/experiment.yaml` | final |
-| Regimes | COVID 2020; recovery/rate hikes 2021-2025 (both OOS) | Huang et al. (2024) (COVID robustness test) | `configs/experiment.yaml` | final |
+| Metrics | Sharpe, Sortino (downside deviation over all periods), Calmar, MDD, turnover, DSR, PBO | Bailey & Lopez de Prado (2014); Bailey et al. (2016); Sortino downside-deviation convention | `configs/experiment.yaml` | final |
+| Significance tests | Ledoit-Wolf (2008) Sharpe-difference test (delta method over NW-HAC moments) with the HAC mean-difference test as supplement; Romano-Wolf for multiple testing | Ledoit & Wolf (2008) robustify the Jobson & Korkie (1981) test against non-normality and time-series dependence; Romano & Wolf (2005) for data snooping | `src/lq45/evaluation/significance.py` | final |
+| Regimes | COVID 2020; recovery/rate hikes 2021-2025 (both OOS) | Huang et al. (2024) (COVID robustness test). Caveat: the OOS evaluation includes fold-0's validation window (Jan-Mar 2020, the crash); those days double as fold-0 early-stopping validation - disclosed here | `configs/experiment.yaml` | final |
 | Risk-free rate | daily BI-7DRRR (= annual / 252) | Bank Indonesia (official source); simple conversion by 252 days | `configs/experiment.yaml` `evaluation.risk_free` | final |
 | Annualization factor | 252 | Standard convention. IDX empirically ~242 days/year; tested as a sensitivity | `configs/experiment.yaml` `evaluation.annualization` | final |
 | MV constraints | long-only, weights sum = 1 | Markowitz (1952); IDX retail trading does not allow shorting | `configs/portfolio.yaml` `constraints` | final |
@@ -132,11 +132,11 @@ without relying on memory.
 
 | Decision | Value | Rationale | Implementation | Status |
 |---|---|---|---|---|
-| **Self-Supervised Pre-training (NEW)** | Masked Autoencoder (MAE) on 7 channels (OHLCV + BI-7DRRR + JISDOR), mask_ratio=0.3, reconstruct OHLCV only | Kang (2025): LSTM on raw OHLCV ≥ technical indicators for price prediction; PatchTST (Nie et al. 2022), TimeMAE (Cheng et al. 2023), MTSMAE (Tang & Zhang 2022): MAE pre-training on time series improves downstream forecasting | `configs/model.yaml` `pretrain`; `src/lq45/models/pretrain.py`; `scripts/03_train_predict.py` `pretrain` mode | final |
+| **Self-Supervised Pre-training (NEW)** | Masked Autoencoder (MAE) on the 8 `FEATURE_COLUMNS`, mask_ratio=0.3, reconstruct all input channels at masked positions | PatchTST (Nie et al. 2022), TimeMAE (Cheng et al. 2023), MTSMAE (Tang & Zhang 2022): MAE pre-training on time series improves downstream forecasting; the input must equal the supervised panel for the encoder to transfer (decision 2026-09-23, revises the raw-OHLCV variant of Kang 2025) | `configs/model.yaml` `pretrain`; `src/lq45/models/pretrain.py`; `scripts/03_train_predict.py` `pretrain` mode | final |
 | **Fine-tuning with Discriminative LR (NEW)** | Head LR=1e-4, Encoder LR=1e-5 (10x smaller), freeze_encoder=false (full unfreeze) | Standard transfer-learning practice; the pre-trained encoder has already learned universal representations, so only the head needs fast adaptation | `configs/model.yaml` `pretrain.fine_tune`; `src/lq45/models/training.py` `fine_tune_model`; `scripts/03_train_predict.py` `walk-forward-pretrain` mode | final |
-| **Pre-train Input** | 7 channels: Open, High, Low, Close, Volume, BI-7DRRR, JISDOR (without technical indicators) | Kang (2025): LSTM on raw OHLCV alone matches XGBoost with 20+ technical indicators; technical indicators = deterministic transform of OHLCV → redundant for DL | `configs/model.yaml` `pretrain.input_channels=7`; `src/lq45/models/dataset.py` `PRETRAIN_CHANNELS` | final |
-| **Pre-train Target** | Reconstruct OHLCV (5 channels) only; macro as conditioning | Macro (BI-7DRRR, JISDOR) is slow-moving and exogenous; price patterns (candles, gaps, volume spikes) are more informative to reconstruct | `src/lq45/models/decoder.py` `n_channels=5`; `src/lq45/models/pretrain.py` `mae_loss` on channels :5 | final |
-| **Pre-train Split** | Train 90% / Val 10% per stock (no purge/embargo because there are no labels) | Pre-training is unlabeled → no leakage; a per-stock split respects independent calendars | `src/lq45/models/walkforward.py` `make_pretrain_split`; `scripts/03_train_predict.py` `run_pretrain` | final |
+| **Pre-train Input** | 8 `FEATURE_COLUMNS` (close, volume, rsi, cci, cmo, mfi, bi_7drrr, jisdor) | Channel alignment with the supervised model is required for encoder transfer (the earlier 7-channel raw-OHLCV variant failed to load: conv shapes (32,7,3) vs (32,8,3)) | `configs/model.yaml` `pretrain.input_channels=8`; `src/lq45/models/dataset.py` `FEATURE_COLUMNS` | final |
+| **Pre-train Target** | Reconstruct all 8 input channels at masked positions | Matches MTSMAE/PatchTST (masked-only reconstruction over the full input); consistent with the aligned input panel | `src/lq45/models/decoder.py` `n_channels=8`; `src/lq45/models/pretrain.py` `mae_loss` | final |
+| **Pre-train Split** | Train 90% / Val 10% of the pre-training windows per stock, on data up to `pretrain.data_end` (2019-12-31) | Unlabeled ≠ no leakage in a backtest: capping pre-training at the design period keeps the encoder blind to the OOS window (decision 2026-09-23, revises the earlier all-data claim) | `src/lq45/models/dataset.py` `pretrain_cutoff_index`, `build_pretrain_windows`; `scripts/03_train_predict.py` `run_pretrain` | final |
 
 ## Stage 3 Implementation (continued)
 
@@ -160,7 +160,7 @@ without relying on memory.
 |---|---|---|---|---|
 | Model evaluated as a ranker | Rank IC and top-minus-bottom spread, not MSE/R2 | The stage 4 portfolio decision uses only the ordering; scale shrinkage preserves the ordering but breaks MSE | `scripts/05_evaluate.py` | final |
 | Cross-seed ensemble ranking | Average of pred_raw across five seeds; the spread is reported | Dampens training variance (Reimers & Gurevych 2017; Bouthillier et al. 2021) | `src/lq45/portfolio/ranking.py` `ensemble_predictions` | final |
-| Main evaluation uses role=test | Validation rows are only for early stopping, not evaluated | Prevents model-selection optimism from leaking into the results | `scripts/04_optimize.py` `prediction_frame` | final |
+| All out-of-sample rows are evaluated | Stage 4 keeps every deduplicated prediction row (the `role` column is audit-only) | Restores fold-0's validation window (Jan-Mar 2020) so the COVID crash is inside the evaluation; caveat: those days double as fold-0 early-stopping validation (disclosed in the Regimes row) | `scripts/04_optimize.py` `prediction_frame` | final |
 
 ---
 
@@ -176,8 +176,10 @@ without relying on memory.
 | Lot rounding before fees | Target shares are rounded down to a multiple of 100; the fee is computed from the change in position | Indonesian retail securities terms (buy 0.19%, sell 0.29%, lot 100) | `src/lq45/portfolio/costs.py` | final |
 | Initial capital 100 million rupiah | Default value of `--capital`; can be changed | Approximates the retail scale so the lot effect is realistic; not a citation | `scripts/04_optimize.py` | final |
 | Rebalancing schedule from the test calendar | Every 21 test prediction dates | Consistent with the 21-day test window at stage 3 | `src/lq45/portfolio/backtest.py` | final |
-| Turnover-adjusted Sharpe | Sharpe multiplied by (1 - turnover); turnover = mean \|weight difference\|/2 per rebalancing | Implementation definition; returns are already net of fees, so a double penalty is avoided | `scripts/05_evaluate.py` | final |
-| DSR uses all configurations as the number of trials | n_trials = number of metric rows | Bailey & Lopez de Prado (2014): correction for multiple trials | `scripts/05_evaluate.py` | final |
+| Turnover diagnostic | Turnover = mean \|weight difference\|/2 per rebalancing, reported as-is | Returns are already net of fees; the earlier `turnover_adjusted_sharpe = Sharpe x (1 - turnover)` was removed as unfounded | `scripts/05_evaluate.py` | final |
+| Execution lag | Trades execute 1 trading day after the signal date | Principle: never trade on the bar the decision was made from; Kim et al. (2025) use a 2-day lag | `configs/portfolio.yaml` `execution_lag_days`; `src/lq45/portfolio/backtest.py` | final |
+| 1/N baseline parity | 1/N rebalances every 21 days and pays the same fees and lot rules as the strategies | DeMiguel et al. (2009) use a periodically rebalanced 1/N; a free daily-rebalanced 1/N is not comparable | `scripts/04_optimize.py` `baselines` | final |
+| DSR trial correction | n_trials = number of metric rows; SR0 scaled by the variance of the trials' Sharpe ratios (per-period units) | Bailey & Lopez de Prado (2014) Eq. (1)-(2), reference `getExpMaxSR(mu, sigma, numTrials)`: sigma is the dispersion of the trials' SRs | `src/lq45/evaluation/dsr_pbo.py`; `scripts/05_evaluate.py` | final |
 
 ---
 
