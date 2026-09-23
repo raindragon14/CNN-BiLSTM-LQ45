@@ -57,11 +57,12 @@ sensitivity:
 
 # Masked Autoencoder Pre-training (self-supervised)
 # Reference: PatchTST (Nie et al. 2022), TimeMAE (Cheng et al. 2023), MTSMAE (Tang & Zhang 2022)
-# Kang (2025): LSTM on raw OHLCV >= technical indicators for price prediction
+# Input = the supervised FEATURE_COLUMNS panel, so the encoder transfers unchanged.
 pretrain:
   enabled: true
   method: "mae"
-  input_channels: 7          # OHLCV + BI-7DRRR + JISDOR (Kang 2025 + exogenous macro)
+  input_channels: 8          # FEATURE_COLUMNS (same panel as the supervised model)
+  data_end: "2019-12-31"     # pre-train sees nothing after the design period
   mask_ratio: 0.3            # MAE standard (He et al. 2022)
   epochs: 50
   lr: 0.001

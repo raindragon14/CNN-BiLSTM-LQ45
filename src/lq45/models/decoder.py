@@ -1,7 +1,8 @@
 """Reconstruction decoder for the Masked Autoencoder (MAE).
 
 Takes the latent sequence from the encoder, upsamples back to the
-original lookback length, then predicts 5 OHLCV channels per timestep.
+original lookback length, then reconstructs every input channel per
+timestep (the supervised FEATURE_COLUMNS panel).
 """
 
 from __future__ import annotations
@@ -11,18 +12,18 @@ from torch import nn
 
 
 class MAEDecoder(nn.Module):
-    """ConvTranspose1d + Linear decoder for reconstructing OHLCV.
+    """ConvTranspose1d + Linear decoder for feature reconstruction.
 
     Architecture:
       - Input: (B, L, H) from the encoder (L = w // pooling)
       - ConvTranspose1d layers to upsample to the lookback length
-      - Final Linear layer: hidden -> 5 channels (OHLCV)
+      - Final Linear layer: hidden -> n_channels (all input features)
     """
 
     def __init__(
         self,
         latent_dim: int,
-        n_channels: int = 5,  # OHLCV target
+        n_channels: int = 5,
         lookback: int = 60,
         pooling: int = 2,
         hidden: int = 128,
@@ -88,13 +89,13 @@ class MAEDecoder(nn.Module):
         self.final = nn.Linear(hidden, n_channels)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
-        """Reconstruct OHLCV from the latent sequence.
+        """Reconstruct the input features from the latent sequence.
 
         Args:
             z: (B, L, H) from the encoder with return_sequence=True
 
         Returns:
-            (B, n_channels, lookback) OHLCV reconstruction
+            (B, n_channels, lookback) feature reconstruction
         """
         _, _, _ = z.shape
         # Project to hidden

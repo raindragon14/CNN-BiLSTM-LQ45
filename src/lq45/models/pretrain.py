@@ -1,7 +1,8 @@
 """Masked Autoencoder (MAE) pre-training for CNN-BiLSTM.
 
-Self-supervised pre-training on OHLCV + macro data (7 channels) without
-return labels. The encoder learns universal price representations.
+Self-supervised pre-training on the processed feature panel
+(FEATURE_COLUMNS) without return labels. The encoder input matches the
+supervised model exactly, so the encoder weights transfer unchanged.
 """
 
 from __future__ import annotations
@@ -145,14 +146,13 @@ def pretrain_mae(
         train_losses = []
 
         for (xb,) in train_loader:
-            xb = xb.to(device)  # (B, 7, T)
+            xb = xb.to(device)
             xb_masked, mask = mask_input(xb, mask_ratio, generator)
 
             optimizer.zero_grad()
             z = encoder(xb_masked, return_sequence=True)  # (B, L, H)
-            pred = decoder(z)  # (B, 5, T)
-            # Compute loss only on OHLCV channels (first 5)
-            loss = mae_loss(pred, xb[:, :5, :], mask)
+            pred = decoder(z)  # (B, C, T)
+            loss = mae_loss(pred, xb, mask)
             loss.backward()
             optimizer.step()
             train_losses.append(loss.item())
@@ -171,8 +171,7 @@ def pretrain_mae(
                 xb_masked, mask = mask_input(xb, mask_ratio, generator)
                 z = encoder(xb_masked, return_sequence=True)
                 pred = decoder(z)
-                # Compute loss only on OHLCV channels (first 5)
-                loss = mae_loss(pred, xb[:, :5, :], mask)
+                loss = mae_loss(pred, xb, mask)
                 val_losses.append(loss.item())
 
         val_loss = float(np.mean(val_losses))

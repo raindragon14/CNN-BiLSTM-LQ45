@@ -45,16 +45,6 @@ class PanelData:
     close: dict[str, np.ndarray]  # (T,) adjusted closing price
 
 
-@dataclass
-class RawStockData:
-    """Raw per-stock data for pre-training (independent calendar)."""
-
-    ticker: str
-    dates: pd.DatetimeIndex
-    features: np.ndarray  # (T, 7) = OHLCV + BI-7DRRR + JISDOR
-    close: np.ndarray  # (T,)
-
-
 def stock_file_name(ticker: str) -> str:
     """File name without the `.JK` suffix."""
     return ticker.replace(".JK", "")
@@ -67,6 +57,17 @@ def forward_log_return(close: np.ndarray, horizon: int) -> np.ndarray:
         return result
     result[:-horizon] = np.log(close[horizon:] / close[:-horizon])
     return result
+
+
+def pretrain_cutoff_index(dates: pd.DatetimeIndex, cutoff: str | None) -> int:
+    """Index of the first date after `cutoff` (`YYYY-MM-DD`).
+
+    Keeps self-supervised pre-training strictly before the out-of-sample
+    period; returns `len(dates)` when no cutoff is given.
+    """
+    if not cutoff:
+        return len(dates)
+    return int(np.searchsorted(dates, pd.Timestamp(cutoff), side="right"))
 
 
 def load_panel(processed_dir: Path, tickers: Sequence[str], horizon: int) -> PanelData:
@@ -159,93 +160,6 @@ def build_windows(
     return windows[valid], label[valid], idx[valid]
 
 
-# Pretrain channels: OHLCV + BI-7DRRR + JISDOR (7 channels)
-PRETRAIN_CHANNELS: tuple[str, ...] = (
-    "open",
-    "high",
-    "low",
-    "close",
-    "volume",
-    "bi_7drrr",
-    "jisdor",
-)
-
-
-def load_raw_stocks(raw_dir: Path, tickers: Sequence[str]) -> list[RawStockData]:
-    """Load raw per-stock OHLCV + macro data for pre-training.
-
-    Each stock is processed independently on its own calendar.
-    Channels: 7 (OHLCV + BI-7DRRR + JISDOR).
-    """
-    if not tickers:
-        raise ValueError("empty ticker list")
-
-    prices_dir = raw_dir / "prices"
-    if not prices_dir.exists():
-        raise FileNotFoundError(f"prices directory not found: {prices_dir}")
-
-    macro_dir = raw_dir / "macro"
-    bi_path = macro_dir / "bi_7drrr.csv"
-    jisdor_path = macro_dir / "jisdor.csv"
-
-    if not bi_path.exists() or not jisdor_path.exists():
-        raise FileNotFoundError(f"macro files not found: {bi_path}, {jisdor_path}")
-
-    bi_df = pd.read_csv(bi_path, parse_dates=["date"]).set_index("date")
-    jisdor_df = pd.read_csv(jisdor_path, parse_dates=["date"]).set_index("date")
-
-    if "rate" in bi_df.columns:
-        bi_df = bi_df.rename(columns={"rate": "bi_7drrr"})
-    if "rate" in jisdor_df.columns:
-        jisdor_df = jisdor_df.rename(columns={"rate": "jisdor"})
-
-    stocks: list[RawStockData] = []
-
-    for ticker in tickers:
-        path = prices_dir / f"{stock_file_name(ticker)}.csv"
-        if not path.exists():
-            continue
-        frame = pd.read_csv(path, parse_dates=["Date"]).set_index("Date")
-        dates = frame.index
-
-        # Align macro to this stock's calendar
-        bi_aligned = bi_df.reindex(dates, method="ffill")["bi_7drrr"].to_numpy(
-            dtype=np.float32
-        )
-        jisdor_aligned = jisdor_df.reindex(dates, method="ffill")["jisdor"].to_numpy(
-            dtype=np.float32
-        )
-
-        # Handle initial NaN (dates before first macro observation)
-        if np.isnan(bi_aligned).any():
-            bi_series = pd.Series(bi_aligned)
-            bi_aligned = bi_series.ffill().bfill().to_numpy(dtype=np.float32)
-        if np.isnan(jisdor_aligned).any():
-            jisdor_series = pd.Series(jisdor_aligned)
-            jisdor_aligned = jisdor_series.ffill().bfill().to_numpy(dtype=np.float32)
-
-        feat = np.column_stack(
-            [
-                frame["Open"].to_numpy(dtype=np.float32),
-                frame["High"].to_numpy(dtype=np.float32),
-                frame["Low"].to_numpy(dtype=np.float32),
-                frame["Close"].to_numpy(dtype=np.float32),
-                frame["Volume"].to_numpy(dtype=np.float32),
-                bi_aligned,
-                jisdor_aligned,
-            ]
-        )
-
-        stocks.append(
-            RawStockData(
-                ticker=ticker,
-                dates=dates,
-                features=feat,
-                close=frame["Close"].to_numpy(dtype=np.float32),
-            )
-        )
-
-    return stocks
 
 
 def build_pretrain_windows(

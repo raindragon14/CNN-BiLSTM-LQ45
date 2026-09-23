@@ -7,11 +7,16 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from lq45.models.dataset import build_windows, forward_log_return
+from lq45.models.dataset import (
+    build_windows,
+    forward_log_return,
+    pretrain_cutoff_index,
+)
 
 
 def test_forward_log_return() -> None:
@@ -54,11 +59,21 @@ def test_nan_and_banned() -> None:
     assert not np.isnan(x).any()
 
 
+def test_pretrain_cutoff_index() -> None:
+    dates = pd.date_range("2019-12-20", periods=6, freq="B")
+    assert pretrain_cutoff_index(dates, None) == 6
+    # The cutoff date itself stays inside the pre-training data.
+    assert pretrain_cutoff_index(dates, "2019-12-23") == 2
+    assert pretrain_cutoff_index(dates, "2019-12-31") == 6
+    assert pretrain_cutoff_index(dates, "2019-12-19") == 0
+
+
 def main() -> int:
     test_forward_log_return()
     test_window_shape_and_content()
     test_nan_and_banned()
-    print("test_dataset.py: 3 tests passed")
+    test_pretrain_cutoff_index()
+    print("test_dataset.py: 4 tests passed")
     return 0
 
 

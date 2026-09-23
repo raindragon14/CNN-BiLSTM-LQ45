@@ -59,13 +59,12 @@ import yaml
 from lq45.features.preprocess import RobustPreprocessor
 from lq45.models.dataset import (
     FEATURE_COLUMNS,
-    PRETRAIN_CHANNELS,
     PanelData,
     build_pretrain_windows,
     build_windows,
     forward_log_return,
     load_panel,
-    load_raw_stocks,
+    pretrain_cutoff_index,
 )
 from lq45.models.decoder import MAEDecoder
 from lq45.models.encoder import CNNBiLSTMEncoder
@@ -81,11 +80,10 @@ from lq45.models.training import (
     set_seed,
     train_model,
 )
-from lq45.models.walkforward import Fold, design_split, make_folds, make_pretrain_split
+from lq45.models.walkforward import Fold, design_split, make_folds
 from lq45.utils.config import (
     EXPERIMENT_DIR,
     PROCESSED_DIR,
-    RAW_DIR,
     ensure_dirs,
     load_config,
 )
@@ -835,10 +833,11 @@ def run_calibrate(args: argparse.Namespace) -> int:
 
 
 def run_pretrain(args: argparse.Namespace) -> int:
-    """Masked Autoencoder pre-training on OHLCV + macro data (7 channels).
+    """Masked Autoencoder pre-training on the processed feature panel.
 
-    Self-supervised pre-training without return labels. The encoder learns a
-    universal price representation from all LQ45 stocks.
+    Self-supervised pre-training without return labels on the same 8
+    FEATURE_COLUMNS the supervised model consumes, so the pre-trained
+    encoder transfers into every walk-forward fold unchanged.
     """
     model_cfg = load_config("model")
     pretrain_cfg = model_cfg.get("pretrain", {})
@@ -859,33 +858,39 @@ def run_pretrain(args: argparse.Namespace) -> int:
         log(run_dir, "pre-training disabled in config (pretrain.enabled=false)")
         return 1
 
-    # Load raw stocks (OHLCV + BI-7DRRR + JISDOR = 7 channels) per stock
-    stocks = load_raw_stocks(RAW_DIR, tickers)
-    log(run_dir, f"loaded {len(stocks)} stocks for pre-training")
+    # Load the processed feature panel (FEATURE_COLUMNS) so the pre-training
+    # input matches the supervised model exactly and the encoder transfers.
+    panel = load_panel_data(tickers, int(model_cfg["horizon_days"]))
+    log(run_dir, f"loaded {len(panel.tickers)} stocks for pre-training")
 
-    # Build pretrain windows from all stocks
     lookback = int(model_cfg["lookback_days"])
+    n_features = len(FEATURE_COLUMNS)
+    cutoff_index = pretrain_cutoff_index(panel.dates, pretrain_cfg.get("data_end"))
+    log(
+        run_dir,
+        f"pre-training data cutoff: index {cutoff_index} "
+        f"({pretrain_cfg.get('data_end') or 'none'})",
+    )
 
-    # First pass: compute splits and collect training data for preprocessing
-    stock_splits = []
-    all_train_data = []
+    # First pass: build pre-training windows with a window-level train/val
+    # split, so the short pre-OOS series still yields a non-empty val set.
+    stock_windows = []
+    for ticker in panel.tickers:
+        features = panel.features[ticker][:cutoff_index]
+        windows, _ = build_pretrain_windows(features, lookback, 0, len(features))
+        n_val = int(len(windows) * pretrain_cfg.get("val_ratio", 0.1))
+        stock_windows.append((windows, len(windows) - n_val))
 
-    for stock in stocks:
-        stock_len = len(stock.features)
-        pt_split = make_pretrain_split(stock_len, pretrain_cfg.get("val_ratio", 0.1))
-        stock_splits.append((stock, pt_split))
-        # Collect training portion for fitting preprocessor
-        train_feat = stock.features[pt_split.train[0] : pt_split.train[1]]
-        if len(train_feat) > 0:
-            all_train_data.append(train_feat)
-
-    # Fit RobustPreprocessor on combined training data (winsorize + min-max)
-    # This normalizes the 7 channels (OHLCV + BI-7DRRR + JISDOR) to prevent
-    # scale issues like JISDOR ~16000 dominating the loss
-    if all_train_data:
-        combined_train = np.concatenate(all_train_data, axis=0)
+    # Fit RobustPreprocessor on the training windows (winsorize + min-max)
+    train_flats = [
+        w[:n].transpose(0, 2, 1).reshape(-1, n_features)
+        for w, n in stock_windows
+        if n > 0
+    ]
+    if train_flats:
+        combined_train = np.concatenate(train_flats, axis=0)
         prep = RobustPreprocessor().fit(
-            pd.DataFrame(combined_train, columns=PRETRAIN_CHANNELS)
+            pd.DataFrame(combined_train, columns=FEATURE_COLUMNS)
         )
         log(
             run_dir,
@@ -898,45 +903,34 @@ def run_pretrain(args: argparse.Namespace) -> int:
         )
         prep = None
 
-    # Second pass: transform features and build windows
+    # Second pass: transform the windows and split them into train/val parts
     all_train_x = []
     all_val_x = []
-
-    for stock, pt_split in stock_splits:
-        # Apply preprocessing if fitted
+    for windows, n_train in stock_windows:
+        flat = windows.transpose(0, 2, 1).reshape(-1, n_features)
         if prep is not None:
-            train_feat = prep.transform(
-                pd.DataFrame(
-                    stock.features[pt_split.train[0] : pt_split.train[1]],
-                    columns=PRETRAIN_CHANNELS,
-                )
+            flat = prep.transform(
+                pd.DataFrame(flat, columns=FEATURE_COLUMNS)
             ).to_numpy(dtype=np.float32)
-            val_feat = prep.transform(
-                pd.DataFrame(
-                    stock.features[pt_split.validation[0] : pt_split.validation[1]],
-                    columns=PRETRAIN_CHANNELS,
-                )
-            ).to_numpy(dtype=np.float32)
-        else:
-            train_feat = stock.features[pt_split.train[0] : pt_split.train[1]]
-            val_feat = stock.features[pt_split.validation[0] : pt_split.validation[1]]
-
-        tx, _ = build_pretrain_windows(train_feat, lookback, 0, len(train_feat))
-        vx, _ = build_pretrain_windows(val_feat, lookback, 0, len(val_feat))
-        if len(tx):
-            all_train_x.append(tx)
-        if len(vx):
-            all_val_x.append(vx)
+        transformed = (
+            flat.reshape(len(windows), lookback, n_features)
+            .transpose(0, 2, 1)
+            .astype(np.float32)
+        )
+        if n_train > 0:
+            all_train_x.append(transformed[:n_train])
+        if len(transformed) > n_train:
+            all_val_x.append(transformed[n_train:])
 
     train_x = (
         np.concatenate(all_train_x, axis=0)
         if all_train_x
-        else np.empty((0, 7, lookback), dtype=np.float32)
+        else np.empty((0, n_features, lookback), dtype=np.float32)
     )
     val_x = (
         np.concatenate(all_val_x, axis=0)
         if all_val_x
-        else np.empty((0, 7, lookback), dtype=np.float32)
+        else np.empty((0, n_features, lookback), dtype=np.float32)
     )
 
     log(run_dir, f"pre-train samples: train {len(train_x)}, val {len(val_x)}")
@@ -951,7 +945,7 @@ def run_pretrain(args: argparse.Namespace) -> int:
         set_seed(seed)
 
         encoder = CNNBiLSTMEncoder(
-            n_features=7,
+            n_features=n_features,
             filters=list(model_cfg["cnn"]["filters"]),
             kernel_size=int(model_cfg["cnn"]["kernel_size"]),
             pooling=int(model_cfg["cnn"]["pooling"]["size"]),
@@ -965,7 +959,7 @@ def run_pretrain(args: argparse.Namespace) -> int:
         )
         decoder = MAEDecoder(
             latent_dim=encoder.output_dim,
-            n_channels=5,  # reconstruct OHLCV only
+            n_channels=n_features,
             lookback=lookback,
             pooling=int(model_cfg["cnn"]["pooling"]["size"]),
             hidden=pretrain_cfg.get("decoder", {}).get("hidden", 128),
@@ -1015,7 +1009,7 @@ def run_pretrain(args: argparse.Namespace) -> int:
         {
             "seeds": seeds,
             "lookback": lookback,
-            "pretrain_channels": list(PRETRAIN_CHANNELS),
+            "pretrain_channels": list(FEATURE_COLUMNS),
             "config": pretrain_cfg,
         },
     )
