@@ -8,9 +8,10 @@ from lq45.evaluation.metrics import (
 )
 from lq45.evaluation.regimes import split_regimes
 from lq45.evaluation.significance import (
+    mean_difference_test,
     newey_west_covariance,
     romano_wolf_stepdown,
-    sharpe_difference_test,
+    sharpe_difference_test_lw,
 )
 
 __all__ = [
@@ -18,10 +19,11 @@ __all__ = [
     "daily_risk_free_rate",
     "deflated_sharpe",
     "max_drawdown_and_duration",
+    "mean_difference_test",
     "newey_west_covariance",
     "pbo_cscv",
     "romano_wolf_stepdown",
-    "sharpe_difference_test",
+    "sharpe_difference_test_lw",
     "split_regimes",
     "summarize_series",
 ]

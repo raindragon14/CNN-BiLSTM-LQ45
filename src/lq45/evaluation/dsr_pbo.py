@@ -30,51 +30,61 @@ def annualized_sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
 
 
 def expected_max_sharpe(n_trials: int, variance: float) -> float:
-    """Expected benchmark Sharpe under the null when n_trials strategies are tested.
+    """Expected maximum Sharpe ratio after n_trials independent trials.
 
-    Follows Bailey & Lopez de Prado (2014) Section 3: the benchmark uses
-    the expected maximum of n_trials random variables.
+    Bailey & Lopez de Prado (2014) Eq. (1)-(2), reference implementation
+    `getExpMaxSR(mu, sigma, numTrials) = mu + sigma * maxZ`: `sigma =
+    sqrt(variance)` is the standard deviation of the TRIALS' Sharpe
+    ratios (not the standard error of one estimate) and scales the whole
+    maxZ bracket.
     """
     if n_trials < 2 or variance <= 0:
         return 0.0
     gamma = 0.5772156649
-    return float(
-        math.sqrt(variance) * ((1.0 - gamma) * norm.ppf(1.0 - 1.0 / n_trials))
-        + gamma * norm.ppf(1.0 - 1.0 / (n_trials * math.e))
+    max_z = (1.0 - gamma) * norm.ppf(1.0 - 1.0 / n_trials) + gamma * norm.ppf(
+        1.0 - 1.0 / (n_trials * math.e)
     )
+    return float(math.sqrt(variance) * max_z)
 
 
 def deflated_sharpe(
     returns: pd.Series,
     n_trials: int,
+    trial_srs: list[float] | None = None,
     benchmark: float = 0.0,
-    periods_per_year: int = 252,
 ) -> dict[str, float]:
-    """DSR: probability the true Sharpe exceeds the benchmark after correction.
+    """DSR: probability the true Sharpe exceeds SR0 after trial correction.
 
-    Returns the Sharpe ratio, the expected benchmark, and the DSR (0-1).
+    Bailey & Lopez de Prado (2014): DSR = Phi((SR - SR0) / sqrt(V[SR]))
+    with per-period (non-annualized) Sharpe ratios throughout, V[SR]
+    carrying the skewness/kurtosis correction, and SR0 scaled by the
+    variance of the trials' Sharpe ratios (`trial_srs`); V[SR] is used as
+    a conservative fallback when the trials are unknown. `benchmark` is
+    an extra per-period hurdle (e.g. a benchmark's Sharpe ratio).
     """
     r = returns.to_numpy(dtype=float)
     n = len(r)
-    sr = annualized_sharpe(returns, periods_per_year)
-    if n < 3:
-        return {"sharpe": sr, "benchmark": benchmark, "dsr": 0.5}
+    if n < 3 or n_trials < 1:
+        return {"sharpe": 0.0, "benchmark": float(benchmark), "dsr": 0.5}
+    sd = float(np.std(r, ddof=1))
+    if sd <= 0:
+        return {"sharpe": 0.0, "benchmark": float(benchmark), "dsr": 0.5}
+    sr = float(np.mean(r) / sd)
     skew = float(pd.Series(r).skew())
-    kurt = float(pd.Series(r).kurtosis())  # excess over normal
-    benchmark_expectation = max(
-        benchmark, expected_max_sharpe(n_trials, 1.0 / n * periods_per_year)
+    kurtosis_pearson = float(pd.Series(r).kurtosis()) + 3.0
+    var_sr = max(
+        (1.0 - skew * sr + (kurtosis_pearson - 1.0) / 4.0 * sr * sr) / (n - 1),
+        1e-12,
     )
-    numerator = (sr - benchmark_expectation) * math.sqrt(max(n - 1, 1))
-    denominator = math.sqrt(
-        max(
-            1.0 - skew * sr + (kurt / 4.0) * sr * sr,
-            1e-12,
-        )
-    )
+    if trial_srs is not None and len(trial_srs) >= 2:
+        var_trials = float(np.var(np.asarray(trial_srs, dtype=float), ddof=1))
+    else:
+        var_trials = var_sr
+    sr0 = max(float(benchmark), expected_max_sharpe(int(n_trials), var_trials))
     return {
         "sharpe": sr,
-        "benchmark": float(benchmark_expectation),
-        "dsr": float(norm.cdf(numerator / denominator)),
+        "benchmark": float(sr0),
+        "dsr": float(norm.cdf((sr - sr0) / math.sqrt(var_sr))),
     }
 
 

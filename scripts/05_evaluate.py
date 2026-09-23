@@ -39,8 +39,9 @@ from lq45.evaluation.metrics import (
 )
 from lq45.evaluation.regimes import split_regimes
 from lq45.evaluation.significance import (
+    mean_difference_test,
     romano_wolf_stepdown,
-    sharpe_difference_test,
+    sharpe_difference_test_lw,
 )
 from lq45.utils.config import REPORT_DIR, load_config
 
@@ -131,9 +132,7 @@ def main() -> int:
         summary = summarize_series(
             returns, rf.reindex(returns.index).fillna(0.0), periods_per_year
         )
-        turnover = mean_turnover(weights, key)
-        summary["turnover"] = turnover
-        summary["turnover_adjusted_sharpe"] = summary["sharpe"] * (1.0 - turnover)
+        summary["turnover"] = mean_turnover(weights, key)
         summary["config"] = key
         summary.update(
             {
@@ -183,22 +182,34 @@ def main() -> int:
             ("1N", benchmark_1n),
             ("IHSG", benchmark_ihsg),
         ):
-            result = sharpe_difference_test(returns, benchmark, periods_per_year)
+            result = sharpe_difference_test_lw(returns, benchmark, periods_per_year)
+            result["test"] = "sharpe_lw2008"
             result["config"] = key
             result["benchmark"] = benchmark_name
             test_rows.append(result)
-    rw_entries = main[main["seed_mode"] == "ensemble"].head(12)
+            supplementary = mean_difference_test(returns, benchmark, periods_per_year)
+            supplementary["test"] = "mean_hac"
+            supplementary["config"] = key
+            supplementary["benchmark"] = benchmark_name
+            test_rows.append(supplementary)
+    rw_entries = main[main["seed_mode"] == "ensemble"]
     rw_matrix = pd.DataFrame({c: series[c] for c in rw_entries["config"]})
     rw_table = romano_wolf_stepdown(rw_matrix, benchmark_1n, seed=0)
     rw_table["benchmark"] = "1N"
     pd.concat(
         [pd.DataFrame(test_rows), rw_table], ignore_index=True, sort=False
     ).to_csv(out_dir / "significance.csv", index=False)
-    # DSR of the best strategy and PBO of the ensemble main grid.
+    # DSR of the best strategy and PBO over the full ensemble grid.
     best = metrics.iloc[0]["config"]
     n_trials = float(len(metrics))
-    dsr = deflated_sharpe(series[best], n_trials=int(n_trials))
-    pbo_matrix = pd.DataFrame({c: series[c] for c in rw_entries["config"]})
+    trial_srs = []
+    for values in series.values():
+        sd = float(values.std(ddof=1))
+        trial_srs.append(float(values.mean() / sd) if sd > 0 else 0.0)
+    dsr = deflated_sharpe(series[best], int(n_trials), trial_srs=trial_srs)
+    pbo_matrix = pd.DataFrame(
+        {c: series[c] for c in metrics[metrics["seed_mode"] == "ensemble"]["config"]}
+    )
     pbo = pbo_cscv(pbo_matrix, n_groups=8, seed=0)
     (out_dir / "dsr_pbo.json").write_text(
         json.dumps(

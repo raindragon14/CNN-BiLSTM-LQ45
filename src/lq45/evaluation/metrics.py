@@ -49,8 +49,8 @@ def summarize_series(
     annual = float((1.0 + cumulative) ** (periods_per_year / n) - 1.0) if n else 0.0
     vol = float(np.std(excess, ddof=1)) if n > 1 else 0.0
     sharpe = float(np.sqrt(periods_per_year) * excess.mean() / vol) if vol > 0 else 0.0
-    down = excess[excess < 0.0]
-    vol_down = float(np.std(down, ddof=1)) if len(down) > 1 else 0.0
+    downside = np.minimum(excess, 0.0)
+    vol_down = float(np.sqrt(np.mean(downside**2)))
     sortino = (
         float(np.sqrt(periods_per_year) * excess.mean() / vol_down)
         if vol_down > 0
