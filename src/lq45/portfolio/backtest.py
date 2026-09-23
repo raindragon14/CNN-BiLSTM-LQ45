@@ -6,11 +6,12 @@ Flow at each rebalancing date `d` (all using information up to `d`):
 2. Estimate the covariance from L daily log returns up to `d`.
 3. Optimize minimum variance or mean-variance under long-only, sum-to-one,
    and maximum-weight constraints.
-4. Round to lots of 100, deduct a 0.19% buy fee and a 0.29% sell fee.
+4. Execute `execution_lag_days` trading days after `d`: round to lots of
+   100, deduct a 0.19% buy fee and a 0.29% sell fee.
 5. Hold until the next rebalancing; daily value follows prices.
 
-Rebalancing dates use the calendar of `role=test` prediction dates every
-21 days to align with the stage-3 test windows.
+Rebalancing dates use the out-of-sample prediction calendar every `step`
+days to align with the stage-3 test windows.
 """
 
 from __future__ import annotations
@@ -63,14 +64,18 @@ def run_backtest(
     step: int = 21,
     ridge_epsilon: float = 1e-4,
     optimizer_type: str = "target_return",
+    execution_lag_days: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Backtest a single configuration; return (weights, daily value).
 
     `predictions` uses columns `date, ticker, pred_ens`; `prices` is
     indexed by date with one column per ticker (Adj Close). `weights`
-    has one row per rebalancing date; the daily value uses columns
-    `date, equity, return`. `optimizer_type`: "target_return" (MV) or
-    "min_variance" (GMV).
+    has one row per rebalancing date plus the execution date used for the
+    trade; the daily value uses columns `date, equity, return`.
+    `optimizer_type`: "target_return" (MV) or "min_variance" (GMV).
+    Trades execute `execution_lag_days` trading days after the signal
+    date, so the decision never trades on the same bar it was made from
+    (Kim et al. 2025 use a two-day lag).
     """
     oos_dates = sorted(predictions["date"].unique().tolist())
     schedule = rebalance_dates(oos_dates, step)
@@ -83,12 +88,6 @@ def run_backtest(
 
     for i, date in enumerate(schedule):
         selected = top_k(predictions, date, k)
-        prices_on_date = prices.loc[prices.index <= date].iloc[-1]
-        equity = cash + float(
-            (holdings * prices_on_date.reindex(holdings.index).fillna(0.0)).sum()
-            if len(holdings)
-            else 0.0
-        )
         if selected:
             returns = returns_matrix(prices[selected], date, lookback)
             returns = returns.dropna(axis=1)
@@ -110,34 +109,63 @@ def run_backtest(
             else:
                 weights = minimum_variance_weights(cov, max_weight)
             weights = weights.reindex(selected).fillna(0.0)
-        target = (
-            target_shares(weights, prices_on_date, equity, lot)
-            if len(weights)
-            else pd.Series(dtype=float)
-        )
-        target = target.reindex(holdings.index.union(target.index)).fillna(0.0)
-        old = holdings.reindex(target.index).fillna(0.0)
-        cash_flow, fee = transaction_value(
-            old, target, prices_on_date, buy_fee, sell_fee
-        )
-        cash = cash + cash_flow - fee
-        holdings = target
-        for ticker, w in weights.items():
-            weight_rows.append(
-                {
-                    "date": date,
-                    "ticker": ticker,
-                    "weight": float(w),
-                    "k": k,
-                    "estimator": estimator,
-                    "lookback": lookback,
-                    "max_weight": max_weight,
-                    "optimizer_type": optimizer_type,
-                }
-            )
+
+        future = price_index[price_index > date]
+        execution_date = None
+        if len(weights) and len(future) >= execution_lag_days:
+            execution_date = future[execution_lag_days - 1]
+
         boundary = schedule[i + 1] if i + 1 < len(schedule) else last_date
         period_days = price_index[(price_index >= date) & (price_index <= boundary)]
-        for day in period_days:
+        if execution_date is not None:
+            pre_trade_days = period_days[period_days < execution_date]
+            post_trade_days = period_days[period_days >= execution_date]
+        else:
+            pre_trade_days = period_days
+            post_trade_days = period_days[:0]
+
+        for day in pre_trade_days:
+            day_prices = prices.loc[day]
+            holdings_value = float(
+                (holdings * day_prices.reindex(holdings.index).fillna(0.0)).sum()
+                if len(holdings)
+                else 0.0
+            )
+            value_rows.append({"date": day, "equity": cash + holdings_value})
+
+        if execution_date is not None:
+            exec_prices = prices.loc[execution_date]
+            equity = cash + float(
+                (holdings * exec_prices.reindex(holdings.index).fillna(0.0)).sum()
+                if len(holdings)
+                else 0.0
+            )
+            target = target_shares(weights, exec_prices, equity, lot)
+            target = target.reindex(holdings.index.union(target.index)).fillna(0.0)
+            old = holdings.reindex(target.index).fillna(0.0)
+            cash_flow, fee = transaction_value(
+                old, target, exec_prices, buy_fee, sell_fee
+            )
+            cash = cash + cash_flow - fee
+            holdings = target
+            for ticker, w in weights.items():
+                weight_rows.append(
+                    {
+                        "date": date,
+                        "execution_date": pd.Timestamp(execution_date).strftime(
+                            "%Y-%m-%d"
+                        ),
+                        "ticker": ticker,
+                        "weight": float(w),
+                        "k": k,
+                        "estimator": estimator,
+                        "lookback": lookback,
+                        "max_weight": max_weight,
+                        "optimizer_type": optimizer_type,
+                    }
+                )
+
+        for day in post_trade_days:
             day_prices = prices.loc[day]
             holdings_value = float(
                 (holdings * day_prices.reindex(holdings.index).fillna(0.0)).sum()
@@ -154,6 +182,7 @@ def run_backtest(
         weight_rows,
         columns=[
             "date",
+            "execution_date",
             "ticker",
             "weight",
             "k",

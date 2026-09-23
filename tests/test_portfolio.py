@@ -67,16 +67,21 @@ def test_lots_and_fees() -> None:
     assert cash_flow < 0 and fee > 0
 
 
-def test_small_backtest() -> None:
-    dates = pd.date_range("2020-01-01", periods=170, freq="B")
+def _synthetic_setup(n_days: int = 170, seed: int = 2):
+    dates = pd.date_range("2020-01-01", periods=n_days, freq="B")
     str_dates = [d.strftime("%Y-%m-%d") for d in dates]
-    rng = np.random.default_rng(2)
+    rng = np.random.default_rng(seed)
     tickers = ["A.JK", "B.JK", "C.JK", "D.JK", "E.JK", "F.JK"]
     prices = pd.DataFrame(
-        100 * np.exp(rng.normal(scale=0.01, size=(170, 6)).cumsum(axis=0)),
+        100 * np.exp(rng.normal(scale=0.01, size=(n_days, 6)).cumsum(axis=0)),
         index=dates,
         columns=tickers,
     )
+    return dates, str_dates, tickers, prices, rng
+
+
+def test_small_backtest() -> None:
+    dates, str_dates, tickers, prices, rng = _synthetic_setup()
     rows = [
         {"date": t, "ticker": c, "pred_ens": float(rng.normal())}
         for t in str_dates
@@ -98,10 +103,43 @@ def test_small_backtest() -> None:
     assert rebalance_dates(str_dates[:42]) == str_dates[:42][::21]
 
 
+def test_execution_lag_and_mixed_roles() -> None:
+    dates, str_dates, tickers, prices, rng = _synthetic_setup(n_days=90, seed=3)
+    rows = []
+    for i, t in enumerate(str_dates):
+        for c in tickers:
+            rows.append(
+                {
+                    "date": t,
+                    "ticker": c,
+                    "pred_ens": float(rng.normal()),
+                    "role": "validation" if i < 5 else "test",
+                }
+            )
+    predictions = pd.DataFrame(rows)
+    weights, values = run_backtest(
+        predictions,
+        prices,
+        k=2,
+        estimator="sample",
+        lookback=30,
+        max_weight=0.6,
+        capital=10_000_000.0,
+    )
+    # Mixed roles are all processed: stage 4 keeps every out-of-sample row.
+    assert len(weights) > 0
+    assert set(weights["date"]).issubset(set(str_dates))
+    # The trade executes strictly after its signal date (1-day lag).
+    executed = pd.to_datetime(weights["execution_date"])
+    signaled = pd.to_datetime(weights["date"])
+    assert (executed > signaled).all()
+    assert (values["equity"] > 0).all()
+
+
 def test_optimizer_determinism() -> None:
     rng = np.random.default_rng(7)
     tickers = list("ABCDE")
-    returns = pd.DataFrame(rng.normal(size=(150, 5)), columns=tickers)
+    returns = pd.DataFrame(rng.normal(size=(150, 5)), index=None, columns=tickers)
     cov = estimate_covariance(returns, "ledoit_wolf")
     mu = pd.Series(rng.normal(0.001, 0.002, size=5), index=tickers)
     target = float(mu.mean())
@@ -120,8 +158,9 @@ def main() -> int:
     test_covariance_and_weights()
     test_lots_and_fees()
     test_small_backtest()
+    test_execution_lag_and_mixed_roles()
     test_optimizer_determinism()
-    print("test_portfolio.py: 5 tests passed")
+    print("test_portfolio.py: 6 tests passed")
     return 0
 
 

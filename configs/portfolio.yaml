@@ -20,3 +20,4 @@ optimization:
   target_return_method: "mean_pred_ens"
 
 rebalance_days: 21
+execution_lag_days: 1        # trade N trading days after the signal date (Kim et al. 2025 use 2)

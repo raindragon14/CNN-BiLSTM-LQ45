@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Stage 4: Top-K ranking and Mean-Variance optimization.
 
-Input: `predictions.csv` from stage 3 (the `role` column marks the test set).
+Input: `predictions.csv` from stage 3 (all rows are out-of-sample; the
+`role` column is kept for audit only).
 Outputs per run (`experiments/<run_id>/`):
     - `weights.csv`            : rebalancing weights per date and configuration
     - `portfolio_returns.csv`  : equity and daily net return per configuration
@@ -39,6 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from lq45.portfolio.backtest import run_backtest
+from lq45.portfolio.costs import target_shares, transaction_value
 from lq45.portfolio.ranking import ensemble_predictions
 from lq45.utils.config import (
     EXPERIMENT_DIR,
@@ -121,20 +123,25 @@ def load_prices() -> pd.DataFrame:
 
 
 def prediction_frame(path: Path) -> pd.DataFrame:
-    """Load the stage-3 prediction results and filter the test-set rows.
+    """Load the stage-3 prediction results.
 
-    Convert the `date` column to ISO 8601 strings and keep only rows with
-    `role == "test"` for out-of-sample evaluation.
+    Every surviving `(date, ticker, seed)` row is an out-of-sample
+    prediction (the stage-3 dedup keeps exactly one row per key, made by a
+    model trained strictly before that date), so no rows are dropped here
+    and the `role` column is kept for audit only. Keeping the
+    `role == "validation"` rows of fold 0 restores the first out-of-sample
+    window (Jan-Mar 2020) that would otherwise be missing from the
+    evaluation, including the COVID crash.
 
     Args:
         path: Path to the `predictions.csv` file.
 
     Returns:
-        DataFrame with the test data and its index reset.
+        DataFrame with the out-of-sample predictions and its index reset.
     """
     frame = pd.read_csv(path, parse_dates=["date"])
     frame["date"] = frame["date"].dt.strftime("%Y-%m-%d")
-    return frame[frame["role"] == "test"].reset_index(drop=True)
+    return frame.reset_index(drop=True)
 
 
 def ranking_frame(frame: pd.DataFrame, seed_mode: str) -> dict[str, pd.DataFrame]:
@@ -164,26 +171,75 @@ def ranking_frame(frame: pd.DataFrame, seed_mode: str) -> dict[str, pd.DataFrame
 
 
 def baselines(
-    prices: pd.DataFrame, oos_dates: list[str], capital: float
+    prices: pd.DataFrame,
+    oos_dates: list[str],
+    capital: float,
+    buy_fee: float = 0.0019,
+    sell_fee: float = 0.0029,
+    lot: int = 100,
+    step: int = 21,
 ) -> pd.DataFrame:
-    """Compute the daily returns of the full-pool 1/N and IHSG benchmarks.
+    """Compute the daily returns of the fee-paying 1/N and IHSG benchmarks.
 
-    1/N splits the capital equally across every available ticker on each
-    date. IHSG is normalized to the initial capital on the first OOS date.
+    1/N rebalances to equal weights on the same `step`-day schedule as the
+    strategies (same 1-day execution lag, lot rounding and buy/sell fees),
+    so the comparison is like-for-like; DeMiguel et al. (2009) use a
+    periodically rebalanced 1/N. IHSG is buy-and-hold normalized to the
+    initial capital on the first OOS date (price index without dividends).
 
     Args:
         prices: Daily closing-price DataFrame.
         oos_dates: List of out-of-sample dates.
         capital: Initial capital in rupiah.
+        buy_fee: Buy fee as a fraction of the buy value.
+        sell_fee: Sell fee as a fraction of the sell value.
+        lot: Lot size for share rounding.
+        step: Trading days between rebalancings.
 
     Returns:
         DataFrame with the equity and daily returns of both benchmarks.
     """
     dates = pd.to_datetime(sorted(set(oos_dates)))
-    oos_prices = prices[prices.index.isin(dates)].sort_index()
-    returns = oos_prices.pct_change().fillna(0.0)
-    ret_1n = returns.mean(axis=1)
-    equity_1n = (1.0 + ret_1n).cumprod() * capital
+    prices_oos = prices.reindex(dates).ffill()
+    cash = float(capital)
+    holdings = pd.Series(dtype=float)
+    equities: list = [None] * len(dates)
+
+    def mark(pos: int) -> None:
+        day_prices = prices_oos.iloc[pos]
+        holdings_value = float(
+            (holdings * day_prices.reindex(holdings.index).fillna(0.0)).sum()
+            if len(holdings)
+            else 0.0
+        )
+        equities[pos] = cash + holdings_value
+
+    for start in range(0, len(dates), step):
+        end = min(start + step, len(dates))
+        execution = min(start + 1, len(dates) - 1)
+        for pos in range(start, min(execution, end)):
+            mark(pos)
+        exec_prices = prices_oos.iloc[execution].dropna()
+        available = exec_prices[exec_prices > 0].index
+        if len(available):
+            equity = cash + float(
+                (holdings * exec_prices.reindex(holdings.index).fillna(0.0)).sum()
+                if len(holdings)
+                else 0.0
+            )
+            weights = pd.Series(1.0 / len(available), index=available)
+            target = target_shares(weights, exec_prices, equity, lot)
+            target = target.reindex(holdings.index.union(target.index)).fillna(0.0)
+            old = holdings.reindex(target.index).fillna(0.0)
+            cash_flow, fee = transaction_value(
+                old, target, exec_prices, buy_fee, sell_fee
+            )
+            cash = cash + cash_flow - fee
+            holdings = target
+        for pos in range(execution, end):
+            mark(pos)
+    equity_1n = pd.Series(equities, index=dates, dtype=float).ffill()
+
     ihsg = pd.read_csv(
         ROOT / "data" / "raw" / "benchmark_ihsg.csv", parse_dates=["Date"]
     ).set_index("Date")
@@ -268,10 +324,14 @@ def main() -> int:
                                 buy_fee=float(costs["buy_fee"]),
                                 sell_fee=float(costs["sell_fee"]),
                                 lot=int(costs["lot_size"]),
+                                step=int(port_cfg.get("rebalance_days", 21)),
                                 ridge_epsilon=float(
                                     port_cfg["covariance"]["ridge_epsilon"]
                                 ),
                                 optimizer_type=optimizer_type,
+                                execution_lag_days=int(
+                                    port_cfg.get("execution_lag_days", 1)
+                                ),
                             )
                             weights["seed_mode"] = mode_name
                             value["k"] = int(k)
@@ -302,9 +362,15 @@ def main() -> int:
                                     f"k={k} {est} L={length} maxw={maxw}",
                                     flush=True,
                                 )
-    baselines(prices, oos_dates, args.capital).to_csv(
-        run_dir / "baseline_returns.csv", index=False
-    )
+    baselines(
+        prices,
+        oos_dates,
+        args.capital,
+        buy_fee=float(costs["buy_fee"]),
+        sell_fee=float(costs["sell_fee"]),
+        lot=int(costs["lot_size"]),
+        step=int(port_cfg.get("rebalance_days", 21)),
+    ).to_csv(run_dir / "baseline_returns.csv", index=False)
     info = {
         "created_utc": datetime.now(UTC).isoformat(),
         "git_sha": git_sha(),
